@@ -10,15 +10,10 @@ This repository contains all application, automation and infrastructure code of 
 | <AccAutomationqaName> | <AccAutomationqaID> | Non-Prod   |
 | <AccAutomationprodName> | <AccAutomationprodID> | Prod       |
 
-## Initial Deployment
 
-Initially we need to deploy the automation infrastructure, which is in the automation/pipeline.yaml file
-Values might change if you redeploy stacks. You can find references here:
-Git2S3: https://gitlab.covestro.com/cloud-engineering-platform/core-templates/git2s3-codepipeline-integration
-Cross Account Pipeline Setup: https://gitlab.covestro.com/cloud-engineering-platform/core-templates/cross-account-pipeline-template
 
 This needs to be deployed in the automation account:
-# Deployment Git2S3 and Deployment Infrastructure
+# Deployment java and Deployment Infrastructure
 `aws cloudformation deploy --template-file ./automation/core-automation-infra.yaml --stack-name <AutomationInfrastructureStack> --parameter-overrides "file://<coreAutomationParameterPath>"`
 
 Now configure Git2S3 accordingly.
