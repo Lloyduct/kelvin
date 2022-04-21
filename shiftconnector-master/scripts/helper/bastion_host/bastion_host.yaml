@@ -102,7 +102,7 @@ Resources:
           yum update -y
           yum install -y haproxy
           yum install -y java 
-          wget https://github.com/ThoughtWorksInc/infra-problem.git
+          git clone https://github.com/ThoughtWorksInc/infra-problem.git
           make libs
           make clean all
           cd front-end/public && ./serve.py 
