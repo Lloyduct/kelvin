@@ -6,9 +6,9 @@ This repository contains all application, automation and infrastructure code of 
 
 | Account Name          | Account ID   | Purpose    |
 |:---------------------:|:------------:|:----------:|
-| DevOps-tauafgolwy | 066201812557 | Automation |
-| Legacy-xvyseuaapm | 713705977451 | Non-Prod   |
-| Legacy-vqlyzkfpcp | 554250442952 | Prod       |
+| DevOps-tauwy | 223066201812557 | Automation |
+| Legacy-uaapm | 223713705977451 | Non-Prod   |
+| Legacy-vqlyp | 223554250442952 | Prod       |
 
 ## Initial Deployment
 
