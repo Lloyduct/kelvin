@@ -6,8 +6,6 @@ All scripts require that you can access the AWS accounts via configured SSO Prof
     (This step will be done automatically if you execute the RDP helper in the project folder.)
 
 All scripts require to have following tools installed on your machine:
-- AWS CLI:  
-    - https://covestro.service-now.com/sp?id=sc_cat_item&sys_id=9418ab5d1b1e741081acfc839b4bcb93
 - AWS Session Manager CLI: 
     - https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html#install-plugin-windows
 
