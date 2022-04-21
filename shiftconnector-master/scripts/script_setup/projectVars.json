@@ -1,14 +1,14 @@
 {
     "ProjectName":  "shiftconnector",
-    "CARID":  "233",
+    "CARID":  "23",
     "Region":  "eu-central-1",
-    "RepositorySSHorHTML":  "git@gitlab.ssh.covestro.com:lemongrass/shiftconnector_233/shiftconnector.git",
+    "RepositorySSHorHTML":  "git@gitlab.ssh.kelvin.com:test/shiftconnector_233/shiftconnector.git",
     "GitVersion":  "v1.1",
-    "GitIntegrationApiKeyArn":  "arn:aws:secretsmanager:eu-central-1:066201812557:secret:shiftconnector-Git2S3Secret-n8Cz1E",
+    "GitIntegrationApiKeyArn":  "arn:aws:secretsmanager:eu-central-1:22366201812557:secret:shiftconnector-Git2S3Secret-n8Cz1E",
     "AccountType":  "legacy",
     "AutomationAccount":  {
-                              "Name":  "DevOps-tauafgolwy",
-                              "ID":  "066201812557",
+                              "Name":  "DevOps-tauwy",
+                              "ID":  "233066201812557",
                               "SSORole":  "AWSAdministratorAccess",
                               "comment":  "_TYPE AND PROFILE MUST NOT BE CHANGED MANUALLY",
                               "Type":  "auto",
@@ -16,41 +16,41 @@
                           },
     "DeployAccounts":  [
                            {
-                               "Name":  "Legacy-xvyseuaapm",
-                               "ID":  "713705977451",
+                               "Name":  "Legacy-xaapm",
+                               "ID":  "223713705977451",
                                "SSORole":  "COV-LegacyBaseInfra",
                                "comment":  "_TYPE AND PROFILE MUST NOT BE CHANGED MANUALLY",
                                "Type":  "qa",
                                "AWSSSOProfile":  "shiftconnector-qa",
-                               "HostedZoneId":  "Z052730735SOQO3DTCULX",
+                               "HostedZoneId":  "Z0TR52730735SOQO3DTCULX",
                                "configCrossAccount":  "./automation/config/cross-account-qa.json",
                                "CrossAccountRoleStack":  "shiftconnector-qa-cross-account-roles"
                            },
                            {
-                               "Name":  "Legacy-vqlyzkfpcp",
+                               "Name":  "Legacy-vqlyp",
                                "ID":  "554250442952",
                                "SSORole":  "COV-LegacyBaseInfra",
                                "comment":  "_TYPE AND PROFILE MUST NOT BE CHANGED MANUALLY",
                                "Type":  "prod",
                                "AWSSSOProfile":  "shiftconnector-prod",
-                               "HostedZoneId":  "Z05245701T87MKBQJ0XV8",
+                               "HostedZoneId":  "Z0FD5245701T87MKBQJ0XV8",
                                "configCrossAccount":  "./automation/config/cross-account-prod.json",
                                "CrossAccountRoleStack":  "shiftconnector-prod-cross-account-roles"
                            }
                        ],
     "CEPPortfolioID":  {
-                           "eu-central-1":  "port-vjzqee3rg3x2c",
-                           "us-east-1":  "port-jr7min7sastgq",
-                           "ap-southeast-1":  "port-ei7wx6z4evwnk"
+                           "eu-central-1":  "port-vjzqee3Srg3x2c",
+                           "us-east-1":  "port-jr7min7sastgSq",
+                           "ap-southeast-1":  "port-ei7wx6z4evSwnk"
                        },
     "SESPortfolioID":  {
-                           "eu-central-1":  "port-eoakunpmspz3g",
-                           "us-east-1":  "port-34lfuyctbvx5w",
-                           "ap-southeast-1":  "port-lfmpidrwod334"
+                           "eu-central-1":  "port-eoakunpmspSz3g",
+                           "us-east-1":  "port-34lfuyctbSvx5w",
+                           "ap-southeast-1":  "port-lfmpSidrwod334"
                        },
     "LZPortfolioIDLegacy":  {
-                                "eu-central-1":  "port-brboeqz3agica",
-                                "us-east-1":  "port-7ezlz2jxdtins",
+                                "eu-central-1":  "port-brboeqz3agSica",
+                                "us-east-1":  "port-7ezlz2jxdtinsS",
                                 "ap-southeast-1":  "port-dr756zssx36xu"
                             },
     "LZPortfolioIDDevOps":  {
@@ -60,13 +60,13 @@
                             },
     "comment1":  "_FROM HERE ANYTHING WILL BE FILLED AUTOMATICALLY",
     "GIT":  {
-                "OutputBucketName":  "shiftconnector-git2s3-output-bucket",
+                "OutputBucketName":  "shifector-git2s3-output-bucket",
                 "GitPullWebHookApi":  "https://jvlnpwxtyb.execute-api.eu-central-1.amazonaws.com/Prod/gitpull",
-                "PublicSSHKey":  "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDuC3rwjxS/HlHMqXXa8jP1VIzUOQ/a4o7uxuLXb24dSh3w8rtdohm16sPcULGQDzI3EIiSaeFzeps6c5KwHwET1FnxWfbdY3iGLLw5jkgRFhG+06cYIpC5kOYM+oHqeBIlFqXRE+jooO5jTZcVBp7+nLiETkOQ55HFYmBqaHk/S9I6uThS5cF11oiMqPij8yOYWqJz3jnpaF09jEW06PkhH96oqkNCqm2sEtXA61KuB10ZI7uXigDaY9r/ogAe6Xbo4YhVYo0HX2SOkI703MLIi9zZfjbPJAWXKaG6Cksoso/MPqtOnJesvN/mb+eYtSaHm2yp7yuvQ2AE9sFKyj5V",
+                "PublicSSHKey":  "ssh-rsa AAAAB3NzaC1yc2ESSSDDFFFFFFFEEWWWJKHJHJHJOHOPJIPIJIPHJIOUGUGDAAAADAQABAAABAQDuC3rwjxS/HlHMqXXa8jP1VIzUOQ/a4o7uxuLXb24dSh3w8rtdohm16sPcULGQDzI3EIiSaeFzeps6c5KwHwET1FnxWfbdY3iGLLw5jkgRFhG+06cYIpC5kOYM+oHqeBIlFqXRE+jooO5jTZcVBp7+nLiETkOQ55HFYmBqaHk/S9I6uThS5cF11oiMqPij8yOYWqJz3jnpaF09jEW06PkhH96oqkNCqm2sEtXA61KuB10ZI7uXigDaY9r/ogAe6Xbo4YhVYo0HX2SOkI703MLIi9zZfjbPJAWXKaG6Cksoso/MPqtOnJesvN/mb+eYtSaHm2yp7yuvQ2AE9sFKyj5V",
                 "GitLabTargetAddress":  ""
             },
     "Git2S3ProvisionedProductNamePrefix":  "Git2S3-",
-    "Git2S3BuckettNameSuffix":  "-git2s3-output-bucket",
+    "Git2S3BuckettNameSuffix":  "-git2s3-ouSt-bucket",
     "CoreAutomationInfrastructureStackSuffix":  "-core-automation",
     "CrossAccountRoleStackSuffix":  "-cross-account-roles",
     "PipelineStackSuffix":  "-automation",
@@ -77,9 +77,9 @@
     "automationConfigpipeline":  "./automation/config/pipeline.json",
     "GeneratedValues":  {
                             "description":  "_Values are generated ",
-                            "AutomationInfrastructureStack":  "shiftconnector-core-automation",
+                            "AutomationInfrastructureStack":  "shconnector-core-automation",
                             "PipelineStack":  "shiftconnector-automation",
-                            "GitlabUrl":  "https://gitlab.covestro.com/lemongrass/shiftconnector_233/shiftconnector",
-                            "RepositoryObjectKey":  "lemongrass/shiftconnector_233/shiftconnector/master/lemongrass_shiftconnector_233_shiftconnector.zip"
+                            "GitlabUrl":  "https://gitlab.kelvin.com/test/shiftconnector_233/shiftconnector",
+                            "RepositoryObjectKey":  "test/shiftconnector_233/shiftcoctor/master/test_shifnnector_233_shiftconnector.zip"
                         }
 }
