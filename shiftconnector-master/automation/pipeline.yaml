@@ -1,0 +1,666 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Creates required automation roles and resources (CodePipeline, CodeBuild, etc.) for automation
+
+Parameters:
+  Git2S3BucketName:
+    Description: S3 source bucket name
+    Type: String
+  SourceObjectKey:
+    Description: S3 source artifact
+    Type: String
+  CodePipelineNonProdCrossAccountRoleArn:
+    Description: IAM role in target account with trust relationship with pipeline host account
+    Type: String
+  NonProdAccountId:
+    Description: Account Id for target account
+    Type: String
+  CodePipelineProdCrossAccountRoleArn:
+    Description: IAM role in target account with trust relationship with pipeline host account
+    Type: String
+  ProdAccountId:
+    Description: Account Id for target account
+    Type: String
+  CodeBuildComputeType:
+    Description: Code Build Runtime Type
+    Default: BUILD_GENERAL1_SMALL
+    Type: String
+  CodeBuildComputeImage:
+    Description: Code Build Runtime Image
+    Default: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+    Type: String
+  CodeBuildType:
+    Description: Code Build Type
+    Default: LINUX_CONTAINER
+    Type: String
+  CodeBuildPrivlegedMode:
+    Description: Code Build Privleged Mode
+    Default: "true"
+    Type: String
+  ApplicationName:
+    Description: Name of the application to set resource names
+    Default: Application
+    Type: String
+  # GitLabTargetAddressExportValue:
+  #   Description: Gitlab Target Address for Pipeline Feedback
+  #   Type: String
+  CloudFormationDeploymentRoleName:
+    Type: String
+    Default: CloudFormationDeploymentRole
+  AccountType:
+    Type: String
+    Description: Used to determine which resources needs to be deployed since CloutTrail is reused in Legacy automation account.
+    AllowedValues:
+      - devops
+      - legacy
+
+Conditions:
+  IsDevops: !Equals
+    - !Ref AccountType
+    - "devops"
+
+Resources:
+  ArtifactKey:
+    Type: AWS::KMS::Key
+    Properties:
+      EnableKeyRotation: True
+      Tags:
+          - Key: cov:cep-template
+            Value: cross-account-pipeline-template
+      KeyPolicy:
+        Statement:
+          - Action:
+              - kms:Create*
+              - kms:Describe*
+              - kms:Enable*
+              - kms:List*
+              - kms:Put*
+              - kms:Update*
+              - kms:Revoke*
+              - kms:Disable*
+              - kms:Get*
+              - kms:Delete*
+              - kms:ScheduleKeyDeletion
+              - kms:CancelKeyDeletion
+              - kms:GenerateDataKey
+              - kms:TagResource
+              - kms:UntagResource
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Resource: "*"
+          - Action:
+              - kms:Decrypt
+              - kms:DescribeKey
+            Effect: Allow
+            Principal:
+              AWS:
+              - !Ref CodePipelineNonProdCrossAccountRoleArn
+              - !Ref CodePipelineProdCrossAccountRoleArn
+            Resource: "*"
+          - Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Effect: Allow
+            Principal:
+              AWS:
+              - !Sub 'arn:aws:iam::${NonProdAccountId}:root'
+              - !Sub 'arn:aws:iam::${ProdAccountId}:root'
+              - !GetAtt CodeBuildRole.Arn
+              - !GetAtt PipelineRole.Arn
+              - !GetAtt PipelineSourceS3CodePipelineActionRole.Arn
+            Resource: "*"
+        Version: "2012-10-17"
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
+
+  ArtifactKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/key/artifact-key-${ApplicationName}"
+      TargetKeyId: !GetAtt ArtifactKey.Arn
+
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              KMSMasterKeyID: !GetAtt ArtifactKey.Arn
+              SSEAlgorithm: aws:kms
+      Tags:
+          - Key: cov:cep-template
+            Value: cross-account-pipeline-template
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  ArtifactBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: ArtifactBucket
+      PolicyDocument:
+        Statement:
+          - Action:
+              - s3:PutObject*
+              - s3:Abort*
+              - s3:GetObject*
+              - s3:GetBucket*
+              - s3:List*
+            Effect: Allow
+            Principal:
+              AWS:
+              - !Sub 'arn:aws:iam::${NonProdAccountId}:root'
+              - !Sub 'arn:aws:iam::${ProdAccountId}:root'
+            Resource: 
+              - !GetAtt ArtifactBucket.Arn
+              - !Sub '${ArtifactBucket.Arn}/*'
+        Version: "2012-10-17"
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+        Version: "2012-10-17"
+      Tags:
+          - Key: cov:cep-template
+            Value: cross-account-pipeline-template
+
+  CodeBuildRoleDefaultPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Effect: Allow
+            Resource:
+              -  !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${CodeBuild}'
+              -  !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${CodeBuild}:*'   
+          - Action:
+              - kms:Decrypt
+              - kms:Encrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+            Effect: Allow
+            Resource: !GetAtt ArtifactKey.Arn
+          - Action:
+              - s3:GetObject*
+              - s3:GetBucket*
+              - s3:List*
+              - s3:DeleteObject*
+              - s3:PutObject*
+              - s3:Abort*
+            Effect: Allow
+            Resource:
+              - !Sub '${ArtifactBucket.Arn}'
+              - !Sub '${ArtifactBucket.Arn}/*'
+          - Action:
+              - kms:Decrypt
+              - kms:DescribeKey
+              - kms:Encrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+            Effect: Allow
+            Resource: !GetAtt ArtifactKey.Arn
+          - Action:
+              - s3:Get*
+              - s3:List*
+            Effect: Allow
+            Resource:
+              - !Sub 'arn:aws:s3:::${Git2S3BucketName}/*'
+              - !Sub 'arn:aws:s3:::${Git2S3BucketName}'
+        Version: "2012-10-17"
+      PolicyName: CodeBuildRoleDefaultPolicy
+      Roles:
+        - Ref: CodeBuildRole
+
+  CodeBuild:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: !Ref CodeBuildComputeType
+        Image: !Ref CodeBuildComputeImage
+        PrivilegedMode: !Ref CodeBuildPrivlegedMode
+        Type: !Ref CodeBuildType
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Source:
+        BuildSpec: "./automation/buildspec.yaml"
+        Type: CODEPIPELINE
+      EncryptionKey: !GetAtt ArtifactKey.Arn
+      Tags:
+          - Key: cov:cep-template
+            Value: cross-account-pipeline-template
+
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+        Version: "2012-10-17"
+      Tags:
+          - Key: cov:cep-template
+            Value: cross-account-pipeline-template
+
+  PipelineRoleDefaultPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - s3:GetObject*
+              - s3:GetBucket*
+              - s3:List*
+              - s3:DeleteObject*
+              - s3:PutObject*
+              - s3:Abort*
+            Effect: Allow
+            Resource:
+              - !GetAtt ArtifactBucket.Arn
+              - !Sub '${ArtifactBucket.Arn}/*'
+          - Action:
+              - kms:Decrypt
+              - kms:DescribeKey
+              - kms:Encrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+            Effect: Allow
+            Resource: !GetAtt ArtifactKey.Arn
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Resource:
+            - !GetAtt PipelineSourceS3CodePipelineActionRole.Arn
+            - !GetAtt PipelineBuildApplicationBuildCodePipelineActionRole.Arn
+            - !Ref CodePipelineNonProdCrossAccountRoleArn
+            - !Ref CodePipelineProdCrossAccountRoleArn
+            - !Sub 'arn:aws:iam::${NonProdAccountId}:role/${CloudFormationDeploymentRoleName}-dev'
+            - !Sub 'arn:aws:iam::${NonProdAccountId}:role/${CloudFormationDeploymentRoleName}-qa'
+            - !Sub 'arn:aws:iam::${ProdAccountId}:role/${CloudFormationDeploymentRoleName}-prod'
+        Version: "2012-10-17"
+      PolicyName: PipelineRoleDefaultPolicy
+      Roles:
+        - Ref: PipelineRole
+
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub "${ApplicationName}-Cross-Account-Pipeline"
+      RoleArn: !GetAtt PipelineRole.Arn
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              ActionTypeId: 
+                Category: Source
+                Owner: AWS
+                Version: '1'
+                Provider: S3
+              OutputArtifacts: 
+                - Name: Artifact_Source_S3_Source
+              Configuration: 
+                S3Bucket: !Ref Git2S3BucketName
+                S3ObjectKey: !Ref SourceObjectKey
+                PollForSourceChanges: false
+              RoleArn: !GetAtt PipelineSourceS3CodePipelineActionRole.Arn
+              RunOrder: 1
+        - Name: Build
+          Actions:
+            - Name: BuildAction
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: 
+                  Ref: CodeBuild
+                EnvironmentVariables: !Sub "[{\"name\":\"BUCKET_NAME\",\"value\":\"${ArtifactBucket}\", \"type\":\"PLAINTEXT\"}]"
+              InputArtifacts:
+                - Name: Artifact_Source_S3_Source
+              OutputArtifacts:
+                - Name: CodeBuildOutput
+              RoleArn: !GetAtt PipelineBuildApplicationBuildCodePipelineActionRole.Arn
+              RunOrder: 1
+        - Name: Deploy_DEV
+          Actions:
+            - Name: DEVDeployAction
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              Configuration:
+                StackName: !Sub "${ApplicationName}-dev"
+                Capabilities: CAPABILITY_NAMED_IAM
+                RoleArn: !Sub 'arn:aws:iam::${NonProdAccountId}:role/${CloudFormationDeploymentRoleName}-dev'
+                ActionMode: CREATE_UPDATE
+                TemplateConfiguration: CodeBuildOutput::infrastructure/config/dev.conf
+                TemplatePath: CodeBuildOutput::packaged_infrastructure.yaml
+              InputArtifacts:
+                - Name: CodeBuildOutput
+              RoleArn: !Ref CodePipelineNonProdCrossAccountRoleArn
+              RunOrder: 1
+        - Name: Deploy_QA
+          Actions:
+            - Name: QADeployAction
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              Configuration:
+                StackName: !Sub "${ApplicationName}-qa"
+                Capabilities: CAPABILITY_NAMED_IAM
+                RoleArn: !Sub 'arn:aws:iam::${NonProdAccountId}:role/${CloudFormationDeploymentRoleName}-qa'
+                ActionMode: CREATE_UPDATE
+                TemplateConfiguration: CodeBuildOutput::infrastructure/config/qa.conf
+                TemplatePath: CodeBuildOutput::packaged_infrastructure.yaml
+              InputArtifacts:
+                - Name: CodeBuildOutput
+              RoleArn: !Ref CodePipelineNonProdCrossAccountRoleArn
+              RunOrder: 1
+                
+        - Name: Manual_Approval_Prod
+          Actions:
+            - Name: Manual
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Version: '1'
+                Provider: Manual 
+              InputArtifacts: []
+              OutputArtifacts: []
+              RunOrder: 1
+        - Name: Deploy_Prod
+          Actions:
+            - Name: DeployProd
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              Configuration:
+                StackName: !Sub "${ApplicationName}-prod"
+                Capabilities: CAPABILITY_NAMED_IAM
+                RoleArn: !Sub 'arn:aws:iam::${ProdAccountId}:role/${CloudFormationDeploymentRoleName}-prod'
+                ActionMode: CREATE_UPDATE
+                TemplateConfiguration: CodeBuildOutput::infrastructure/config/prod.conf
+                TemplatePath: CodeBuildOutput::packaged_infrastructure.yaml
+              InputArtifacts:
+                - Name: CodeBuildOutput
+              RoleArn: !Ref CodePipelineProdCrossAccountRoleArn
+              RunOrder: 1
+
+      ArtifactStore:
+        EncryptionKey:
+          Id: !GetAtt ArtifactKey.Arn
+          Type: KMS
+        Location:
+          Ref: ArtifactBucket
+        Type: S3
+      Tags:
+        - Key: cov:cep-template
+          Value: cross-account-pipeline-template
+    DependsOn:
+      - PipelineRoleDefaultPolicy
+
+  PipelineSourceS3CodePipelineActionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+        Version: "2012-10-17"
+      Tags:
+          - Key: cov:cep-template
+            Value: cross-account-pipeline-template
+
+  PipelineSourceS3CodePipelineActionRoleDefaultPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - s3:GetObject*
+              - s3:GetBucket*
+              - s3:List*
+              - s3:DeleteObject*
+              - s3:PutObject*
+              - s3:Abort*
+            Effect: Allow
+            Resource:
+              - !GetAtt ArtifactBucket.Arn
+              - !Sub '${ArtifactBucket.Arn}/*'
+              - !Sub 'arn:aws:s3:::${Git2S3BucketName}'
+              - !Sub 'arn:aws:s3:::${Git2S3BucketName}/*'
+          - Action:
+              - kms:Decrypt
+              - kms:DescribeKey
+              - kms:Encrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+            Effect: Allow
+            Resource: 
+              - !GetAtt ArtifactKey.Arn
+        Version: "2012-10-17"
+      PolicyName: PipelineSourceS3CodePipelineActionRoleDefaultPolicy
+      Roles:
+        - Ref: PipelineSourceS3CodePipelineActionRole
+
+  PipelineEventsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+        Version: "2012-10-17"
+      Tags:
+          - Key: cov:cep-template
+            Value: cross-account-pipeline-template
+
+  PipelineEventsRoleDefaultPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action: codepipeline:StartPipelineExecution
+            Effect: Allow
+            Resource:
+                - !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${Pipeline}"
+        Version: "2012-10-17"
+      PolicyName: PipelineEventsRoleDefaultPolicy
+      Roles:
+        - Ref: PipelineEventsRole
+      
+
+  PipelineBuildApplicationBuildCodePipelineActionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+        Version: "2012-10-17"
+      Tags:
+          - Key: cov:cep-template
+            Value: cross-account-pipeline-template
+
+  PipelineBuildApplicationBuildCodePipelineActionRoleDefaultPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - codebuild:BatchGetBuilds
+              - codebuild:StartBuild
+              - codebuild:StopBuild
+              - cloudformation:ValidateTemplate
+            Effect: Allow
+            Resource: !GetAtt CodeBuild.Arn
+        Version: "2012-10-17"
+      PolicyName: PipelineBuildApplicationBuildCodePipelineActionRoleDefaultPolicy
+      Roles:
+        - Ref: PipelineBuildApplicationBuildCodePipelineActionRole
+
+  S3PipelineTrigger:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - 'AWS API Call via CloudTrail'
+        detail:
+          eventSource:
+            - s3.amazonaws.com
+          eventName:
+            - CopyObject
+            - PutObject
+            - CompleteMultipartUpload
+          requestParameters:
+            bucketName:
+              - !Ref Git2S3BucketName
+            key:
+              - !Ref SourceObjectKey
+      Targets:
+        -
+          Arn: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${Pipeline}"
+          RoleArn: !GetAtt PipelineEventsRole.Arn
+          Id: codepipeline-AppPipeline
+  
+  AWSCloudTrailBucketPolicy:
+    Condition: IsDevops
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AWSCloudTrailBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Sid: AWSCloudTrailAclCheck
+            Effect: Allow
+            Principal:
+              Service:
+                - cloudtrail.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource: !GetAtt AWSCloudTrailBucket.Arn
+          -
+            Sid: AWSCloudTrailWrite
+            Effect: Allow
+            Principal:
+              Service:
+                - cloudtrail.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub '${AWSCloudTrailBucket.Arn}/AWSLogs/${AWS::AccountId}/*'
+            Condition: 
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+
+  AWSCloudTrailBucket:
+    Condition: IsDevops
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: "AES256"
+      LifecycleConfiguration:
+        Rules:
+        - Id: DeleteContentAfter1Day
+          Status: 'Enabled'
+          ExpirationInDays: 1
+        - Id: "Handle incomplete multipart uploads"
+          AbortIncompleteMultipartUpload:
+            DaysAfterInitiation: 5
+          Status: "Enabled"
+      OwnershipControls:
+        Rules:
+        - ObjectOwnership: "BucketOwnerPreferred"
+
+  AwsCloudTrail:
+    Condition: IsDevops
+    DependsOn:
+      - AWSCloudTrailBucketPolicy
+    Type: AWS::CloudTrail::Trail
+    Properties:
+      S3BucketName: !Ref AWSCloudTrailBucket
+      EventSelectors:
+        -
+          DataResources:
+            -
+              Type: AWS::S3::Object
+              Values:
+                - !Sub 'arn:aws:s3:::${Git2S3BucketName}/'
+          ReadWriteType: WriteOnly
+      IncludeGlobalServiceEvents: true
+      IsLogging: true
+      IsMultiRegionTrail: true
+
+  # GitLabStatusIntegration:
+  #   Type: AWS::CodeStarNotifications::NotificationRule
+  #   DependsOn: Pipeline
+  #   Properties: 
+  #     DetailType: "FULL"
+  #     EventTypeIds: 
+  #       - codepipeline-pipeline-action-execution-succeeded
+  #       - codepipeline-pipeline-action-execution-failed
+  #       - codepipeline-pipeline-action-execution-canceled
+  #       - codepipeline-pipeline-action-execution-started
+  #       - codepipeline-pipeline-stage-execution-started
+  #       - codepipeline-pipeline-stage-execution-succeeded
+  #       - codepipeline-pipeline-stage-execution-resumed
+  #       - codepipeline-pipeline-stage-execution-canceled
+  #       - codepipeline-pipeline-stage-execution-failed
+  #       - codepipeline-pipeline-pipeline-execution-failed
+  #       - codepipeline-pipeline-pipeline-execution-canceled
+  #       - codepipeline-pipeline-pipeline-execution-started
+  #       - codepipeline-pipeline-pipeline-execution-resumed
+  #       - codepipeline-pipeline-pipeline-execution-succeeded
+  #       - codepipeline-pipeline-pipeline-execution-superseded
+  #       - codepipeline-pipeline-manual-approval-failed
+  #       - codepipeline-pipeline-manual-approval-needed
+  #       - codepipeline-pipeline-manual-approval-succeeded
+  #     Name: !Sub "${Pipeline}-to-GitLab"
+  #     Resource: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${Pipeline}"
+  #     Targets: 
+  #       - TargetType: SNS 
+  #         TargetAddress: 
+  #           Fn::ImportValue:
+  #             !Ref GitLabTargetAddressExportValue
+
+Outputs:
+  ArtifactBucketEncryptionKeyArn:
+    Value: !GetAtt ArtifactKey.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ArtifactBucketEncryptionKey'
+  ArtifactBucketArn:
+    Value: !GetAtt ArtifactBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ArtifactBucketArn'
+  CrossAccountPipelineHostAccountId:
+    Value: !Ref AWS::AccountId
+    Export: 
+      Name: !Sub '${AWS::StackName}-CrossAccountPipelineHostAccountId'

@@ -1,0 +1,12 @@
+{
+    "Parameters":  {
+                       "Git2S3Version":  "v1.1",
+                       "Git2S3IntegrationApiKeyArn":  "arn:aws:secretsmanager:eu-central-1:223066201812557:secret:shiftconnector-Git2S3Secret-n8Cz1E",
+                       "Git2S3OutputBucketName":  "shiftconnector-git2s3-output-bucket",
+                       "Git2S3ProvisionedProductName":  "Git2S3-shiftconnector",
+                       "SSORole":  "arn:aws:iam::223066201812557:role/aws-reserved/sso.amazonaws.com/eu-west-1/AWSReservedSSO_AWSAdministratorAccess_e65395616ccdb50b",
+                       "CEPPortfolioID":  "port-vjzqee3rg3x2c",
+                       "ServiceName":  "shiftconnector",
+                       "AccountType":  "legacy"
+                   }
+}

@@ -1,0 +1,338 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: infrastructure setup
+
+Parameters:
+  Stage:
+    Description: Stage of the application
+    Type: String
+  VpcId:
+    Description: Id of the VPC
+    Type: String
+  EnableEnhancedMonitoring:
+    Description: Provide metrics in real time for the operating system (OS) that your DB instance runs on.
+    Type: String
+    AllowedValues: [true, false]
+    Default: true
+  BackupRetentionPeriod:
+    Type: Number
+    Description: Days to retain snapshots of RDS
+  DBSnapshotIdentifier:
+    Description: (OPTIONAL) Snapshot identifier to restore the RDS database from
+    Type: String
+  EC2SecurityGroup:
+    Description: Security group for application EC2 instance
+    Type: String
+  HostedZoneId:
+    Type: String
+    Description: ID for the hosted zone to use
+  ServiceName:
+    Description: The name of the application to roll out
+    Type: String
+  SubnetA:
+    Type: String
+    Description: ID of the first subnet to place the instance(s) in
+  SubnetB:
+    Type: String
+    Description: ID of the second subnet to place the instance(s) in
+  DBInstanceType:
+    Description: Instance Type size parameter
+    Type: String
+  DBStorage:
+    Description: Storage of the Database
+    Type: String
+    
+
+Conditions:
+  HasEnhancedMonitoring: !Equals [ !Ref EnableEnhancedMonitoring, 'true' ]
+  IsProd: !Equals [ !Ref Stage, 'prod' ]
+  IsDBRestoration: !Not [!Equals [ !Ref DBSnapshotIdentifier, "" ] ]
+  IsQa: !Equals [ !Ref Stage, 'qa' ]
+
+Mappings:
+  Config:
+    Service:
+      PreferredMaintenanceWindow: "sun:00:00-sun:02:00"
+      PreferredBackupWindow: "03:00-05:00"
+      Engine: "sqlserver-se"
+      EngineVersion: "15.00.4073.23.v1"
+      MaxAllocatedStorage: 2000
+
+Resources:
+  DBSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      SourceSecurityGroupId: !Ref EC2SecurityGroup
+      GroupId: !Ref DBSecurityGroup
+      IpProtocol: tcp
+      FromPort: !GetAtt DBInstance.Endpoint.Port
+      ToPort: !GetAtt DBInstance.Endpoint.Port
+      Description: allow access to the database for application server on EC2
+  
+  DBSecurityGroupEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref DBSecurityGroup
+      IpProtocol: "-1"
+      DestinationPrefixListId: !ImportValue cov-network-intranet-prefix-list
+      Description: Allow Egress only in Intranet
+
+  # DBSecurityGroupIngressActiveDirectoryJoin1:
+  #   Type: AWS::EC2::SecurityGroupIngress
+  #   Properties:
+  #     GroupId: !Ref DBSecurityGroup
+  #     IpProtocol: tcp
+  #     FromPort: !GetAtt DBInstance.Endpoint.Port
+  #     ToPort: !GetAtt DBInstance.Endpoint.Port
+  #     CidrIp: "10.222.32.189/32"
+  #     Description: allow inbound communication from shared AD
+      
+  # DBSecurityGroupIngressActiveDirectoryJoin1:
+  #   Type: AWS::EC2::SecurityGroupIngress
+  #   Properties:
+  #     GroupId: !Ref DBSecurityGroup
+  #     IpProtocol: tcp
+  #     FromPort: !GetAtt DBInstance.Endpoint.Port
+  #     ToPort: !GetAtt DBInstance.Endpoint.Port
+  #     CidrIp: "10.222.33.171/32"
+  #     Description: allow inbound communication from shared AD
+
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Database security group
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub "${ServiceName}-${Stage}-db-sg"
+
+  SecretClusterAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !Ref DBMasterSecret
+      TargetId: !Ref DBInstance
+      TargetType: AWS::RDS::DBInstance
+
+  DBMasterSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      GenerateSecretString:
+        SecretStringTemplate: !Join ['', ['{"username": "', "dbadmin", '"}']]
+        GenerateStringKey: "password"
+        ExcludePunctuation: true
+        PasswordLength: 16
+      Tags:
+        - Key: !Ref ServiceName
+          Value: secretsmanager
+        - Key: Secret
+          Value: master
+        - Key: cov:leg-access
+          Value: appl 
+          
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: DB subnet group
+      SubnetIds:
+        - !Ref SubnetA
+        - !Ref SubnetB
+
+  EnhancedMonitoringRole:
+    Condition: HasEnhancedMonitoring
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Sid: ''
+          Effect: Allow
+          Principal:
+            Service: monitoring.rds.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole
+      Path: "/"
+
+  DBInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: "Snapshot"
+    UpdateReplacePolicy: "Snapshot"
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+        - id: F80
+          reason: "Deletion protection is enabled in prod environment but shouldn't be in dev."
+    Properties:
+      DBInstanceClass: !Ref DBInstanceType
+      StorageType: gp2
+      DeletionProtection: !If [IsProd, true, false]
+      Engine: !FindInMap [Config, Service, Engine]
+      EngineVersion: !FindInMap [Config, Service, EngineVersion]
+      PreferredMaintenanceWindow: !FindInMap [Config, Service, PreferredMaintenanceWindow] 
+      PreferredBackupWindow: !FindInMap [Config, Service, PreferredBackupWindow] 
+      LicenseModel: license-included
+      Port: !Ref 'AWS::NoValue'
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      PubliclyAccessible: false
+      EnablePerformanceInsights: !If [IsProd, true, false]
+      DeleteAutomatedBackups: !If [IsProd, false, true]
+      DBParameterGroupName: !Ref DBParameterGroup
+      DBSnapshotIdentifier: !If [IsDBRestoration, !Ref DBSnapshotIdentifier, !Ref 'AWS::NoValue']
+      AllocatedStorage: !If [IsDBRestoration, !Ref 'AWS::NoValue', !Ref DBStorage ]
+      MaxAllocatedStorage: !If [IsDBRestoration, !Ref 'AWS::NoValue', !FindInMap [Config, Service, MaxAllocatedStorage] ]
+      MasterUsername: !If [IsDBRestoration, !Ref 'AWS::NoValue', !Join ['', ['{{resolve:secretsmanager:', !Ref DBMasterSecret, ':SecretString:username}}' ]]]
+      MasterUserPassword: !If [IsDBRestoration, !Ref 'AWS::NoValue', !Join ['', ['{{resolve:secretsmanager:', !Ref DBMasterSecret, ':SecretString:password}}' ]]]
+      StorageEncrypted: !If [IsDBRestoration, !Ref 'AWS::NoValue', true]
+      ## RESET from 0 to !Ref BackupRetentionPeriod ONCE APP IS MIGRATED. 0 is needed interims for DB Migration due to performance issues with Backups.
+      BackupRetentionPeriod: !If [IsDBRestoration, !Ref 'AWS::NoValue', !Ref BackupRetentionPeriod]
+      ## RESET from 0 to !Ref BackupRetentionPeriod ONCE APP IS MIGRATED. 0 is needed interims for DB Migration due to performance issues with Backups.
+      MonitoringInterval: !If [IsDBRestoration, !Ref 'AWS::NoValue', !If [HasEnhancedMonitoring, 60, 0]]
+      MonitoringRoleArn: !If [IsDBRestoration, !Ref 'AWS::NoValue', !If [HasEnhancedMonitoring, !GetAtt ['EnhancedMonitoringRole', 'Arn'], !Ref 'AWS::NoValue']]
+      #### CHANGE ACCORDING TO THE NEEDS OF YOUR APPLICATION
+      Timezone: "W. Europe Standard Time"
+      ## Can be used for restoring a database backup from S3
+      # OptionGroupName: !Ref DBOptionGroup
+      ## These Attributes are only needed for AD Join
+      # DomainIAMRoleName: !Ref DBADJoinRole
+      # Domain: !Ref DirectoryId
+      VPCSecurityGroups:
+      - !GetAtt DBSecurityGroup.GroupId
+      #### Following Tags will be required in order to apply additional AWS discounts on database Migrations
+      #### THESE MUST NOT BE USED FOR NON-MIGRATION databases - (map-migrated, map-dba, aws-migration-project-id)
+      Tags: 
+      - Key: "map-migrated"
+        Value: "arn:aws:ec2:eu-central-1:117607382478:instance/i-0ddc58ed407f5f066"
+      - Key: "aws-migration-project-id"
+        Value: "MPE22026"
+      - 'Fn::If':
+        - IsQa
+        -
+          Key: "Schedule"
+          Value: "GermanOfficeHours"
+        - !Ref AWS::NoValue
+  # DBADJoinRole:
+  #   Type: AWS::IAM::Role
+  #   Properties:
+  #     AssumeRolePolicyDocument:
+  #       Version: 2012-10-17
+  #       Statement:
+  #         - Effect: Allow
+  #           Principal:
+  #             Service:
+  #             - rds.amazonaws.com
+  #           Action:
+  #             - 'sts:AssumeRole'
+  #     Path: /
+  #     Policies:
+  #       - PolicyName: SecretManagerAccessPolicy
+  #         PolicyDocument:
+  #           Version: 2012-10-17
+  #           Statement:
+  #             - Effect: Allow
+  #               Action:
+  #                 - "ds:DescribeDirectories"
+  #                 - "ds:AuthorizeApplication"
+  #                 - "ds:UnauthorizeApplication"
+  #                 - "ds:GetAuthorizedApplicationDetails"
+  #               Resource: "*"
+
+  DBParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Description: Custom parameter group for RDS instance
+      Family: sqlserver-se-15.0
+      Parameters:
+          rds.force_ssl: "1"
+
+  RDSRecordSet:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId : !Ref HostedZoneId
+      Name: !Sub "${ServiceName}-db-${Stage}.${AWS::AccountId}.aws.glpoly.net"
+      ResourceRecords:
+      - !GetAtt DBInstance.Endpoint.Address
+      TTL: 900
+      Type: CNAME
+
+
+##### ROLE MUST BE DELETED ONCE MIGRATION IS DONE ####
+##### OPTION GROUP MUST BE ADJUSTED TO REMOVE THE ROLE ####
+  RDSMigRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - rds.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: DB_Migration_S3
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "s3:ListBucket"
+                  - "s3:GetBucketLocation"
+
+                Resource: !Sub 'arn:aws:s3:::${ServiceName}-db-backup*'
+        - PolicyName: DB_Migration_S3_Files
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "s3:GetObject"
+                  - "s3:PutObject"
+                  - "s3:ListMultipartUploadParts"
+                  - "s3:AbortMultipartUpload"
+                Resource: !Sub 'arn:aws:s3:::${ServiceName}-db-backup*/*'
+  DBOptionGroupBackUpRestore:
+    Type: AWS::RDS::OptionGroup
+    Properties:
+      EngineName: sqlserver-se
+      MajorEngineVersion: "15.00"
+      OptionConfigurations:
+      - OptionName: SQLSERVER_BACKUP_RESTORE
+        OptionSettings:
+        - Name: IAM_ROLE_ARN
+          Value: !GetAtt RDSMigRole.Arn
+      OptionGroupDescription: Custom option group for RDS instance
+
+###### END MIGRATION ROLE / OPTION GROUP
+
+Outputs:
+
+  DBEndpoint:
+    Description: database endpoint
+    Value: !Ref RDSRecordSet
+    Export:
+      Name: !Sub "${AWS::StackName}-DBEndpoint"
+
+  DBPort:
+    Description: database listener port
+    Value: !GetAtt DBInstance.Endpoint.Port
+    Export:
+      Name: !Sub "${AWS::StackName}-DBPort"
+
+  DBId:
+    Description: DB instance ID
+    Value: !Ref DBInstance
+    Export:
+      Name: !Sub "${AWS::StackName}-DBId"
+
+  DBSecurityGroup:
+    Description: Security group for DB instance
+    Value: !GetAtt DBSecurityGroup.GroupId
+    Export:
+      Name: !Sub "${AWS::StackName}-DBSecurityGroup"
+
+  DBMasterSecret:
+    Description: Master secret for DB instance
+    Value: !Ref DBMasterSecret
+    Export:
+      Name: !Sub "${AWS::StackName}-DBMasterSecret"

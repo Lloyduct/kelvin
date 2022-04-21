@@ -1,0 +1,440 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Ec2 infrastructure setup
+
+Parameters:
+  Stage:
+    Description: Stage of the application
+    Type: String
+  VpcName:
+    Description: Name of the VPC
+    Type: String
+  AlarmsEmail:
+    Type: String
+    Description: if provided, an e-mail will be sent to the given address, when the healthcheck alarm is triggered
+  EnableEC2Autorecover:
+    Description: if enabled, the system healthcheck of the EC2 instance will be performed. In case of errors the instance will be restarted.
+    Type: String
+    AllowedValues: [true, false]
+  EC2RestoreAMI:
+    Description: (OPTIONAL) AMI identifier to restore the EC2 instance from
+    Type: String
+  ServiceName:
+    Description: The name of the application to roll out
+    Type: String
+  Subnet:
+    Type: String
+    Description: ID of the subnet to place the instance(s) in
+  EC2InstanceType:
+    Description: Instance Type size parameter
+    Type: String
+  EC2VolumeSize:
+    Description: Volume size of the EC2
+    Type: String
+  PatchTag:
+    Description: Tag used to identify ec2 for patching
+    Type: String
+  BackupTag:
+    Description: Tag used to identify ec2 for backups
+    Type: String
+  HostedZoneId:
+    Type: String
+    Description: ID for the hosted zone to use
+  privateIPV4:
+    Type: String
+    Description: Private Static ip4 Address
+  ShiftconnectorCWAgentConfigName:
+    Type: String
+    Description: name of Cloudwatch Agent config store in System Manager Store Paratemer
+  ShiftconnectorMainLogGroupName:
+    Type: String
+    Description: name of Shiftconnector Main Log Group
+  ShiftconnectorInterfacesLogGroupName:
+    Type: String
+    Description: name of Shiftconnector Interfaces Log Group
+
+Conditions:
+  IsAutorecoverEnabled: !Equals [!Ref EnableEC2Autorecover, true]
+  IsEmailProvided: !And
+    - !Not [!Equals [!Ref AlarmsEmail, ""]]
+    - !Equals [!Ref EnableEC2Autorecover, true]
+  IsEC2Restoration: !Not [!Equals [ !Ref EC2RestoreAMI, "" ] ]
+  IsDev: !Equals [ !Ref Stage, 'dev' ]
+  IsQa: !Equals [ !Ref Stage, 'qa' ]
+  IsProd: !Equals [ !Ref Stage, 'prod' ]
+
+Mappings:
+  Config:
+    Service:
+      ImageId: 'ami-0795f043475f793e2'
+
+
+Resources:
+
+################### Main Application Instance ###################
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F1000
+            reason: "Outbound traffic limitations will need to be added by the project team. Whitelisted to have the template running"
+    Properties:
+      GroupName: !Sub ${AWS::StackName}-${AWS::AccountId}-${AWS::Region}-securityGroup
+      GroupDescription: "Default security group for ec2 instance"
+      VpcId:
+        Fn::ImportValue: !Sub "cov-network-${VpcName}-vpc-id"
+      ####### Remove RDP access before Go-Live
+      SecurityGroupIngress:
+       - Description: "RDP access"
+         FromPort: 3389
+         ToPort: 3389
+         IpProtocol: tcp
+         SourcePrefixListId: !ImportValue cov-network-intranet-prefix-list
+       - Description: "SMB Fileshare access"
+         FromPort: 445
+         ToPort: 445
+         IpProtocol: tcp
+         SourcePrefixListId: !ImportValue cov-network-intranet-prefix-list
+       - Description: "HTTPS Web access"
+         FromPort: 443
+         ToPort: 443
+         IpProtocol: tcp
+         SourcePrefixListId: !ImportValue cov-network-intranet-prefix-list
+    ####### Outbound connections are open.
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-${ServiceName}-${Stage}-ec2-sg"
+        - Key: !Ref ServiceName
+          Value: ec2
+
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: TagRootVolumePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: "ec2:Describe*"
+                Resource: "*"
+              - Effect: Allow
+                Action: "ec2:CreateTags"
+                Resource:
+                  - !Sub 'arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:volume/*'
+                  - !Sub 'arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+        - arn:aws:iam::aws:policy/CloudWatchFullAccess
+        - arn:aws:iam::aws:policy/CloudWatchActionsEC2Access
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub EC2InstanceProfile-${AWS::StackName}
+      Path: "/"
+      Roles:
+        - !Ref EC2Role
+
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !If [IsEC2Restoration, !Ref EC2RestoreAMI, !FindInMap [Config, Service, ImageId]]
+      InstanceType: !Ref EC2InstanceType
+      # The If setup allows to enhance storage manually in the WebUI and restore it from an AMI afterwards
+      # Storage must never be changed via CFN as this would recreate the Ec2 Instance
+      BlockDeviceMappings: 
+        - !If
+          - IsEC2Restoration
+          - !Ref AWS::NoValue
+          - DeviceName: /dev/sda1
+            Ebs:
+              VolumeSize: !Ref EC2VolumeSize
+              VolumeType: gp3
+              Encrypted : true
+              DeleteOnTermination: true
+        - !If
+          - IsEC2Restoration
+          - !Ref AWS::NoValue
+          - DeviceName: xvdf
+            Ebs:
+              VolumeSize: 500
+              VolumeType: gp3
+              Encrypted : true
+              DeleteOnTermination: true
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      Monitoring: !If [IsProd, true, false]
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: false
+          DeviceIndex: "0"
+          SubnetId: !Ref Subnet
+          GroupSet:
+            - !GetAtt "EC2SecurityGroup.GroupId"
+          PrivateIpAddress: !Ref privateIPV4
+      Tags:
+        - Key: "Name"
+          Value: !Sub "${AWS::StackName}-${ServiceName}-ec2"
+        - Key: "PatchGroup"
+          Value: !Ref PatchTag
+        - Key: "BackupSelector"
+          Value: !Ref BackupTag
+        - Key: "app"
+          Value: !Ref ServiceName
+        - Key: "cov:adsecuritygroup"
+          Value: !Sub "shiftconnector-${Stage}"
+        - 'Fn::If':
+          - IsQa
+          -
+            # Key: "Schedule".kuh m
+            Value: ."GermanOfficeHours"
+          - !Ref AWS::NoValue
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            <powershell>
+            tzutil /s "W. Europe Standard Time"
+            C:\'Program Files'\Amazon\AmazonCloudWatchAgent\amazon-cloudwatch-agent-ctl.ps1 -a append-config -m ec2 -c "ssm:${ShiftconnectorCWAgentConfigName}" -s
+            </powershell>
+          - ShiftconnectorCWAgentConfigName: !Ref CwAgentConfiguration
+
+  Ec2DnsEntry:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub "${ServiceName}-ec2.${AWS::AccountId}.aws.glpoly.net" 
+      ResourceRecords:
+      - !GetAtt EC2Instance.PrivateIp
+      TTL: 900
+      Type: A
+
+
+###########################################################################################################
+############# ONLY VALID FOR WINDOWS BACKUPS                                          #####################
+############# DELETE IF YOU USE LINUX EC2 IMAGES                                       ####################
+###########################################################################################################
+### VolumeShadowCopy setup ###
+  VssComponentSSMAssociation:
+    Type: AWS::SSM::Association
+    Properties: 
+      Name: "AWS-ConfigureAWSPackage"
+      OutputLocation:
+        S3Location:
+          OutputS3BucketName: !Ref SsmAssociationOutputBucket
+          OutputS3KeyPrefix: "SsmAssoc"
+      Parameters: 
+        name:
+          - "AwsVssComponents"
+        action:
+          - "Install"
+        installationType:
+          - "Uninstall and reinstall"
+      Targets:
+        - Key: InstanceIds
+          Values: 
+            - !Ref EC2Instance
+
+  VssComponentBackupPolicy:
+    Type: AWS::IAM::Policy
+    Properties: 
+      PolicyName: "CreateVssBackups"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Action: "ec2:CreateTags"
+            Resource:
+              - "arn:aws:ec2:*::snapshot/*"
+              - "arn:aws:ec2:*::image/*"
+          - Effect: "Allow"
+            Action:
+              - "ec2:DescribeInstances"
+              - "ec2:CreateSnapshot"
+              - "ec2:CreateImage"
+              - "ec2:DescribeImages"
+            Resource: "*"
+      Roles: 
+        - !Ref EC2Role
+
+### S3 related ###
+  SsmAssociationOutputBucket:
+    Type: AWS::S3::Bucket
+    Properties: 
+      BucketName: !Sub "${ServiceName}-vss-ssm-assoc-${Stage}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: "AES256"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: True
+        BlockPublicPolicy: True
+        IgnorePublicAcls: True
+        RestrictPublicBuckets: True
+
+
+###########################################################################################################
+############# END OF WINDOWS BACKUP                                                   #####################
+###########################################################################################################
+
+  CloudWatchSystemAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: IsAutorecoverEnabled
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-${ServiceName}-ec2-system-alarm"
+      AlarmDescription: !Sub "StatusCheckFailed_System alarm for ${ServiceName}-${Stage}"
+      ActionsEnabled: true
+      AlarmActions:
+        - !Sub "arn:aws:automate:${AWS::Region}:ec2:reboot"
+        - !If [IsEmailProvided, !Ref SNSTopic, !Ref 'AWS::NoValue']
+      MetricName: "StatusCheckFailed_System"
+      Namespace: "AWS/EC2"
+      Statistic: "Average"
+      Dimensions:
+      - Name: "InstanceId"
+        Value: !Ref EC2Instance
+      Period: 180
+      EvaluationPeriods: 2
+      Threshold: 0.99
+      ComparisonOperator: "GreaterThanOrEqualToThreshold"
+
+  CloudWatchInstanceAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: IsAutorecoverEnabled
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-${ServiceName}-${Stage}-ec2-instance-alarm"
+      AlarmDescription: !Sub "StatusCheckFailed_Instance alarm for ${ServiceName}-${Stage}"
+      ActionsEnabled: true
+      AlarmActions:
+        - !Sub "arn:aws:automate:${AWS::Region}:ec2:reboot"
+        - !If [IsEmailProvided, !Ref SNSTopic, !Ref 'AWS::NoValue']
+      MetricName: "StatusCheckFailed_Instance"
+      Namespace: "AWS/EC2"
+      Statistic: "Average"
+      Dimensions:
+      - Name: "InstanceId"
+        Value: !Ref EC2Instance
+      Period: 180
+      EvaluationPeriods: 2
+      Threshold: 0.99
+      ComparisonOperator: "GreaterThanOrEqualToThreshold"
+
+##########################################################################
+  #                       Log Files Collected                              #
+##########################################################################
+  CwAgentConfiguration:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Name: !Ref ShiftconnectorCWAgentConfigName
+      Type: String
+      Description: Cloudwatch Agent Configuration File.
+      Value: !Sub |
+        {
+          "logs":{
+              "logs_collected":{
+                "files":{
+                    "collect_list":[
+                      {
+                          "file_path":"D:\\Web\\wwwroot\\shiftconnector\\Logs\\*",
+                          "log_group_name":"${ShiftconnectorMainLogGroupName}",
+                          "log_stream_name":"{instance_id}"
+                      },
+                      {
+                          "file_path":"D:\\Web\\wwwroot\\shiftconnector_webapi\\logs\\*",
+                          "log_group_name":"${ShiftconnectorMainLogGroupName}",
+                          "log_stream_name":"{instance_id}"
+                      },
+                      {
+                          "file_path":"D:\\Web\\SC712\\logs\\*",
+                          "log_group_name":"${ShiftconnectorMainLogGroupName}",
+                          "log_stream_name":"{instance_id}"
+                      },
+                      {
+                           "file_path":"D:\\Web\\SC712_api\\ogs\\*",
+                           "log_group_name":"${ShiftconnectorMainLogGroupName}",
+                           "log_stream_name":"{instance_id}"
+                      },
+                      {
+                           "file_path":"D:\\JOBs\\Shiftconnector\\OSIPI_10433\\logs\\*",
+                           "log_group_name":"${ShiftconnectorInterfacesLogGroupName}",
+                           "log_stream_name":"{instance_id}"
+                      },
+                      {
+                           "file_path":"D:\\JOBs\\Shiftconnector\\OSIPI_DefaultValues\\logs\\*",
+                           "log_group_name":"${ShiftconnectorInterfacesLogGroupName}",
+                           "log_stream_name":"{instance_id}"
+                      },
+                      {
+                           "file_path":"D:\\JOBs\\Shiftconnector\\SAP_MasterDataImporter__main\\logs\\*",
+                           "log_group_name":"${ShiftconnectorInterfacesLogGroupName}",
+                           "log_stream_name":"{instance_id}"
+                      },
+                      {
+                           "file_path":"D:\\JOBs\\Shiftconnector\\SAP_MasterDataImporter__MDI2_79\\logs\\*",
+                           "log_group_name":"${ShiftconnectorInterfacesLogGroupName}",
+                           "log_stream_name":"{instance_id}"
+                      },
+                       {
+                            "file_path":"D:\\JOBs\\Shiftconnector\\SAP_NOTIFs_Service__main\\logs\\*",
+                            "log_group_name":"${ShiftconnectorInterfacesLogGroupName}",
+                            "log_stream_name":"{instance_id}"
+                       },
+                       {
+                            "file_path":"D:\\JOBs\\Shiftconnector\\SAP_NOTIFs_Service__MDI2\\logs\\*",
+                            "log_group_name":"${ShiftconnectorInterfacesLogGroupName}",
+                            "log_stream_name":"{instance_id}"
+                        }
+
+                    ]
+                }
+              }
+          }
+        }
+################### Common Resources ###################
+
+  SNSTopic:
+    Type: AWS::SNS::Topic
+    Condition: IsEmailProvided
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${ServiceName}-${Stage}-alarm-topic"
+
+  SNSSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: IsEmailProvided
+    Properties:
+      TopicArn: !Ref SNSTopic
+      Endpoint: !Ref AlarmsEmail
+      Protocol: "email"
+      Region: !Ref AWS::Region
+
+
+Outputs:
+
+  SNSTopic:
+    Condition: IsEmailProvided
+    Description: SNSTopic which is created for the alarm notifications to be forwarded to
+    Value: !Ref SNSTopic
+
+  EC2SecurityGroup:
+    Description: Security group for EC2 instance
+    Value: !GetAtt EC2SecurityGroup.GroupId
+    Export:
+      Name: !Sub "${AWS::StackName}-EC2SecurityGroup"
+
+  EC2Id:
+    Description: EC2 instance ID
+    Value: !Ref EC2Instance
+    Export:
+      Name: !Sub "${AWS::StackName}-EC2Id"

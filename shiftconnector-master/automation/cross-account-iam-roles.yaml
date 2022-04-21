@@ -1,0 +1,518 @@
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  This template deploys a codepipeline and associated resources for cross account deployments. This is the second of two templates. 
+  This template is to be deployed in the target cross-account. The first template is applied in the host account where codepipeline resides.
+
+Metadata:
+
+  CovestroCrossAccountPipeline:
+    EntrypointName: "Launch in target account"
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Host pipeline account 
+        Parameters:
+          - HostAccountId
+          - ArtifactBucketArn
+          - ArtifactKey
+      - Label:
+          default: Target account IAM
+        Parameters:
+          - CrossAccountRoleName
+          - CloudFormationDeploymentRoleName
+
+    ParameterLabels:
+      HostAccountId:
+        Default: HostAccount Id
+      ArtifactBucketArn:
+        Default: Artifact Bucket Arn
+      ArtifactKey:
+        Default: Artifact Key Arn
+      CrossAccountRoleName:
+        Default: Cross Account Role Name
+      CloudFormationDeploymentRoleName:
+        Default: CloudFormation Deployment Role Name
+
+Parameters:
+  HostAccountId:
+    Description: Host account id
+    Type: String
+  ArtifactBucketArn:
+    Description: Artifact bucket Arn
+    Type: String
+  ArtifactKey:
+    Description: Artifact bucket KMS Arn (leave blank if first run of template)
+    Type: String
+  CrossAccountRoleName:
+    Description: Cross account role name
+    Default: CodePipelineCrossAccountRole 
+    Type: String
+  CloudFormationDeploymentRoleName:
+    Description: Cloudformation deployment role name
+    Default: CloudFormationDeploymentRole
+    Type: String
+  LZPortfolioID:
+    Description: LZ PortfolioID
+    Type: String
+    Default: ""
+  SESPortfolioID:
+    Description: LZ PortfolioID
+    Type: String
+    Default: ""
+  AS2PortfolioId:
+    Type: "String"
+    Default: "port-ruycsjyas7njy"
+  Stage:
+    Description: Name of the development Stage
+    Type: String
+
+Conditions:
+  CreateCrossAccountRolePolicy: !Not 
+    - !Equals 
+      - !Ref ArtifactKey
+      - ''
+  DeployNetwork: !Not
+    - !Equals 
+      - !Ref LZPortfolioID
+      - 'false'
+Resources:
+
+  CrossAccountRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${CrossAccountRoleName}-${Stage}"
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal: 
+              AWS: !Sub 'arn:aws:iam::${HostAccountId}:root'
+        Version: "2012-10-17"
+
+  CrossAccountRolePolicy:
+    Type: AWS::IAM::Policy
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F4
+            reason: "The actions with * are needed and cannot be minimized"
+    Condition: CreateCrossAccountRolePolicy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - iam:PassRole
+            Effect: Allow
+            Resource: !GetAtt CloudFormationDeploymentRole.Arn
+          - Action:
+              - cloudformation:*
+            Effect: Allow
+            Resource: '*'
+          - Action:
+              - s3:Get*
+              - s3:Put*
+              - s3:ListBucket
+            Effect: Allow
+            Resource: 
+              - !Ref ArtifactBucketArn
+              - !Sub '${ArtifactBucketArn}/*'
+          - Action:
+              - kms:DescribeKey
+              - kms:GenerateDataKey*
+              - kms:Encrypt
+              - kms:ReEncrypt*
+              - kms:Decrypt
+            Effect: Allow
+            Resource:
+              - !Ref ArtifactKey
+        Version: "2012-10-17"
+      PolicyName: !Sub "CodeBuildRoleDefaultPolicy-${Stage}"
+      Roles:
+        - !Ref CrossAccountRole
+
+
+  CloudFormationDeploymentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${CloudFormationDeploymentRoleName}-${Stage}"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSBackupFullAccess
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+        Version: "2012-10-17"
+
+
+
+
+  CloudFormationDeploymentRolePolicy:
+    Type: AWS::IAM::Policy
+    Condition: CreateCrossAccountRolePolicy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - iam:PassRole
+              - iam:GetRole
+              - iam:CreateRole
+              - iam:AttachRolePolicy
+            Effect: Allow
+            Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/*'
+          - Action:
+              - s3:GetObject*
+              - s3:GetBucket*
+              - s3:List*
+            Effect: Allow
+            Resource: 
+              - !Ref ArtifactBucketArn
+              - !Sub '${ArtifactBucketArn}/*'
+          - Action:
+              - kms:DescribeKey
+              - kms:Decrypt
+            Effect: Allow
+            Resource:
+              - !Sub '${ArtifactBucketArn}/${ArtifactKey}'
+          - Action:
+              - ssm:GetParameters
+            Effect: Allow
+            Resource:
+              - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/HostedZoneId*'
+          - Action:
+              - cloudformation:CreateStack
+              - cloudformation:DescribeStack*
+              - cloudformation:GetStackPolicy
+              - cloudformation:GetTemplate*
+              - cloudformation:SetStackPolicy
+              - cloudformation:UpdateStack
+              - cloudformation:ValidateTemplate
+            Effect: Allow
+            Resource:
+              - !Sub 'arn:aws:cloudformation:${AWS::Region}::${AWS::AccountId}:stack/ProdApplicationDeploymentStack*'
+
+        Version: "2012-10-17"
+      PolicyName: !Sub "CloudFormationDeploymentRoleBasePolicy-${Stage}"
+      Roles:
+        - !Ref CloudFormationDeploymentRole
+
+  CloudFormationDeploymentInstanceSchedulerPolicy:
+    Type: AWS::IAM::Policy
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F4
+            reason: "The actions with * are needed"
+          - id: F39
+            reason: "This is needed since resources cannot be limited currently."    
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+            - dynamodb:*
+            Effect: Allow
+            Resource: "arn:aws:dynamodb:*:*:table/*"
+          - Action:
+            - lambda:*
+            Effect: Allow
+            Resource: "arn:aws:lambda:*:*:function:InstanceScheduler*"
+          - Action:
+            - events:*
+            Effect: Allow
+            Resource: "*"
+          - Action:
+            - logs:*
+            Effect: Allow
+            Resource: "*"
+          - Action:
+            - kms:Create*
+            - kms:Describe*
+            - kms:Enable*
+            - kms:List*
+            - kms:Put*
+            - kms:Update*
+            - kms:Revoke*
+            - kms:Disable*
+            - kms:Get*
+            - kms:Delete*
+            - kms:ScheduleKeyDeletion
+            - kms:CancelKeyDeletion
+            - kms:GenerateDataKey
+            - kms:TagResource
+            - kms:UntagResource
+            Effect: Allow
+            Resource: "*"
+          - Action:
+            - sns:*
+            Effect: Allow
+            Resource: 
+             - '*'
+          - Action:
+            - iam:Delete*
+            - iam:PutRolePolicy
+            - iam:DetachRolePolicy
+            - iam:Get*
+            - iam:List*
+            - iam:Describe*
+            - iam:PassRole
+            - iam:CreateServiceLinkedRole
+            - iam:CreateRole
+            - iam:AttachRolePolicy
+            - iam:UpdateAssumeRolePolicy
+            - iam:UpdateRole
+            - iam:CreatePolicy*
+            - iam:CreateInstanceProfile
+            - iam:AddRoleToInstanceProfile
+            - iam:RemoveRoleFromInstanceProfile
+            Effect: Allow
+            Resource: 
+              - '*'
+          - Action:
+            - lambda:*
+            Effect: Allow
+            Resource: "arn:aws:lambda:*:*:function:*-InstanceSchedulerMain"
+        Version: "2012-10-17"
+      PolicyName: !Sub "CloudFormationDeploymentInstanceSchedulerPolicy-${Stage}"
+      Roles:
+        - !Ref CloudFormationDeploymentRole
+
+
+  CloudFormationDeploymentVPCPolicy:
+    Type: AWS::IAM::Policy
+    Condition: DeployNetwork
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F4
+            reason: "The actions with * are needed and cannot be minimized"
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+            - servicecatalog:*
+            Effect: Allow
+            Resource: '*'
+        Version: "2012-10-17"
+      PolicyName: !Sub "CloudformationDeploymentVPCPolicy-${Stage}"
+      Roles:
+        - !Ref CloudFormationDeploymentRole
+
+  CloudFormationDeploymentEC2Policy:
+    Type: AWS::IAM::Policy
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F4
+            reason: "The actions with * are needed"
+          - id: F39
+            reason: "This is needed since resources cannot be limited currently."
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+            - s3:*
+            Effect: Allow
+            Resource: 
+              - '*'
+          - Action:
+            - ec2:*
+            Effect: Allow
+            Resource:
+              - '*'
+          - Action:
+            - cloudwatch:*
+            Effect: Allow
+            Resource:
+              - '*'
+          - Action:
+            - sns:*
+            Effect: Allow
+            Resource: 
+             - '*'
+          - Action:
+            - secretsmanager:*
+            Effect: Allow
+            Resource: 
+             - '*'
+          - Action:
+            - events:*
+            Effect: Allow
+            Resource: 
+              - '*'
+          - Action:
+            - iam:Delete*
+            - iam:PutRolePolicy
+            - iam:DetachRolePolicy
+            - iam:Get*
+            - iam:List*
+            - iam:Describe*
+            - iam:PassRole
+            - iam:CreateServiceLinkedRole
+            - iam:CreateRole
+            - iam:AttachRolePolicy
+            - iam:UpdateAssumeRolePolicy
+            - iam:UpdateRole
+            - iam:CreatePolicy*
+            - iam:CreateInstanceProfile
+            - iam:AddRoleToInstanceProfile
+            - iam:RemoveRoleFromInstanceProfile
+            Effect: Allow
+            Resource: 
+              - '*'
+          - Action:
+              - backup-storage:MountCapsule
+              - backup:*
+            Effect: Allow
+            Resource: "*"
+          - Action:
+              - ssm:*
+            Effect: Allow
+            Resource:
+              - '*'
+          - Action:
+              - lambda:*
+            Effect: Allow
+            Resource:
+              - '*'
+          - Action:
+            - route53:Describe*
+            - route53:List*
+            - route53:Get*
+            - route53:ChangeResourceRecordSets
+            Effect: Allow
+            Resource: '*'
+        Version: "2012-10-17"
+      PolicyName: !Sub "CloudformationDeploymentEC2Policy-${Stage}"
+      Roles:
+        - !Ref CloudFormationDeploymentRole
+
+  CloudFormationDeploymentRDSPolicy:
+    Type: AWS::IAM::Policy
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F4
+            reason: "The actions with * are needed"
+          - id: F39
+            reason: "This is needed since resources cannot be limited currently."
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+            - ec2:*
+            Effect: Allow
+            Resource:
+              - '*'
+          - Action:
+            - rds:*
+            Effect: Allow
+            Resource: "*"
+          - Action:
+            - cloudwatch:*
+            Effect: Allow
+            Resource:
+              - '*'
+          - Action:
+            - route53:Describe*
+            - route53:List*
+            - route53:Get*
+            - route53:ChangeResourceRecordSets
+            Effect: Allow
+            Resource: '*'
+          - Action:
+            - secretsmanager:CreateSecret
+            - secretsmanager:DeleteSecret
+            - secretsmanager:PutSecretValue
+            - secretsmanager:UpdateSecret
+            - secretsmanager:Describe*
+            - secretsmanager:List*
+            - secretsmanager:Get*
+            - secretsmanager:GetRandomPassword
+            - secretsmanager:TagResource
+            - secretsmanager:UntagResource
+            - secretsmanager:RotateSecret 
+            - secretsmanager:CancelRotateSecret
+            Effect: Allow
+            Resource: 
+             - '*'
+          - Action:
+            - iam:Delete*
+            - iam:PutRolePolicy
+            - iam:DetachRolePolicy
+            - iam:Get*
+            - iam:List*
+            - iam:Describe*
+            - iam:PassRole
+            - iam:CreateServiceLinkedRole
+            - iam:CreateRole
+            - iam:AttachRolePolicy
+            - iam:UpdateAssumeRolePolicy
+            - iam:UpdateRole
+            - iam:CreatePolicy*
+            - iam:CreateInstanceProfile
+            - iam:AddRoleToInstanceProfile
+            - iam:RemoveRoleFromInstanceProfile
+            Effect: Allow
+            Resource: 
+              - '*'
+        Version: "2012-10-17"
+      PolicyName: !Sub "CloudformationDeploymentRDSPolicy-${Stage}"
+      Roles:
+        - !Ref CloudFormationDeploymentRole
+
+  CloudFormationDeploymentSesPolicy:
+    Type: AWS::IAM::Policy
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F4
+            reason: "The actions with * are needed and cannot be minimized"
+    Properties:
+      PolicyName: !Sub "SES-${Stage}"
+      Roles:
+        - !Ref CloudFormationDeploymentRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action:
+            - servicecatalog:*
+            Effect: Allow
+            Resource: '*'
+
+  ImportLZPortfolio:
+    Type: AWS::ServiceCatalog::PortfolioPrincipalAssociation
+    Condition: DeployNetwork
+    Properties: 
+      PortfolioId: !Ref LZPortfolioID
+      PrincipalARN: !GetAtt CloudFormationDeploymentRole.Arn
+      PrincipalType: IAM
+
+  AppstreamPortfolioAssoc:
+    Type: AWS::ServiceCatalog::PortfolioPrincipalAssociation
+    Properties: 
+      PortfolioId: !Ref AS2PortfolioId
+      PrincipalType: IAM
+      PrincipalARN: !GetAtt CloudFormationDeploymentRole.Arn
+
+  SESPortfolioAssoc:
+    Type: AWS::ServiceCatalog::PortfolioPrincipalAssociation
+    Properties: 
+      PortfolioId: !Ref SESPortfolioID
+      PrincipalType: IAM
+      PrincipalARN: !GetAtt CloudFormationDeploymentRole.Arn
+
+Outputs:
+  CodePipelineCrossAccountRoleArn:
+    Value: !GetAtt CrossAccountRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-CodePipelineCrossAccountRoleArn'
+  CrossAccountPipelineTargetAccountId:
+    Value: !Ref AWS::AccountId
+    Export: 
+      Name: !Sub '${AWS::StackName}-CrossAccountPipelineTargetAccountId'
+  CloudFormationDeploymentRoleArn:
+    Value: !GetAtt CloudFormationDeploymentRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudFormationDeploymentRoleArn'

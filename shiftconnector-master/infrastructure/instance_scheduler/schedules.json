@@ -1,0 +1,82 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "AWS Instance Schedule Definition Stack",
+    "Parameters": {
+        "ServiceToken": {
+            "Type": "String"
+        }
+    },
+    "Resources": {
+        "GermanOfficehour": {
+            "Type": "Custom::ServiceInstanceSchedule",
+            "Properties": {
+                "Name": "GermanOfficeHours",
+                "Description": "Office hours in Germany",
+                "NoStackPrefix": "True",
+                "Timezone": "Europe/Amsterdam",
+                "ServiceToken": {"Ref": "ServiceToken" },
+                "Periods": [
+                    {
+                        "Description": "Core Working hours on weekdays",
+                        "BeginTime": "08:00",
+                        "EndTime": "18:00",
+                        "WeekDays": "Mon-Fri"
+                    },
+                    {
+                        "Description": "Weekend Maintenance Window",
+                        "BeginTime": "00:30",
+                        "EndTime": "02:00",
+                        "WeekDays": "Sun"
+                    }
+                ]
+            }
+        },
+        "GermanOfficehourRDS": {
+            "Type": "Custom::ServiceInstanceSchedule",
+            "Properties": {
+                "Name": "GermanOfficeHoursRDS",
+                "Description": "Office hours in Germany",
+                "NoStackPrefix": "True",
+                "Timezone": "Europe/Amsterdam",
+                "ServiceToken": {"Ref": "ServiceToken" },
+                "Periods": [
+                    {
+                        "Description": "Core Working hours on weekdays",
+                        "BeginTime": "07:45",
+                        "EndTime": "21:05",
+                        "WeekDays": "Mon-Fri"
+                    },
+                    {
+                        "Description": "Weekend Maintenance Window",
+                        "BeginTime": "00:30",
+                        "EndTime": "02:00",
+                        "WeekDays": "Sun"
+                    }
+                ]
+            }
+        },
+        "AutoShutdown": {
+            "Type": "Custom::ServiceInstanceSchedule",
+            "Properties": {
+                "Name": "AutoShutdown",
+                "Description": "Daily Shutdown 6pm",
+                "NoStackPrefix": "True",
+                "Timezone": "Europe/Amsterdam",
+                "ServiceToken": {"Ref": "ServiceToken" },
+                "Periods": [
+                    {
+                        "Description": "Shutdown",
+                        "EndTime": "18:05",
+                        "WeekDays": "Mon-Fri"
+                    },
+                    {
+                        "Description": "Weekend Maintenance Window",
+                        "BeginTime": "00:30",
+                        "EndTime": "02:00",
+                        "WeekDays": "Sun"
+                    }
+                ]
+            }
+        }
+    }
+}

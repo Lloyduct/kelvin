@@ -1,0 +1,11 @@
+{
+    "Parameters":  {
+                       "HostAccountId":  "223066201812557",
+                       "ArtifactBucketArn":  "arn:aws:s3:::shiftconnector-automation-artifactbucket-5l69nrxor5mf",
+                       "ArtifactKey":  "arn:aws:kms:eu-central-1:223066201812557:key/f71a70bf-71-4763-ad43-94e247a23875",
+                       "LZPortfolioID":  "port-brboeqz3agica",
+                       "SESPortfolioID":  "port-eoakunpmspz3g",
+                       "Stage":  "prod",
+                       "CloudFormationDeploymentRoleName":  "shiftconnector-deployrole"
+                   }
+}

@@ -1,0 +1,237 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'RDS database instance monitoring'
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+    - Label:
+        default: 'RDS'
+      Parameters:
+      - DBInstanceID
+      - DBAllocatedStorage
+    - Label:
+        default: 'Thresholds'
+      Parameters:
+      - RdsCpuSaturationThreshold
+      - RdsMemorySaturationThreshold
+      - RdsStorageSaturationThreshold
+
+Parameters:
+  Stage:
+    Type: String
+  DBInstanceID:
+      Description: My database instance
+      Type: String
+  DBAllocatedStorage:
+    Default: '20'
+    Description: The size of the database (GiB)
+    Type: Number
+    MinValue: '5'
+    MaxValue: '3000'
+    ConstraintDescription: Must be between 20 and 3000 GiB.
+  DBAllocatedMemory:
+    Default: '1'
+    Description: The size of memory (GiB)
+    Type: Number
+    MinValue: '1'
+    MaxValue: '240'
+    ConstraintDescription: Must be between 1 and 240 GiB.
+  AlarmsEmail:
+    Description: AlarmsEmail for the SNS Topic
+    Type: String
+  RdsCpuSaturationThreshold:
+    Description: 'The maximum percentage of CPU utilization (set to -1 to disable).'
+    Type: Number
+    Default: 80
+    MinValue: -1
+    MaxValue: 100
+  RdsMemorySaturationThreshold:
+    Description: 'The maximum percentage of Memory usage (set to -1 to disable).'
+    Type: Number
+    Default: 80
+    MinValue: -1
+    MaxValue: 100
+  RdsStorageSaturationThreshold:
+    Description: 'The maximum percentage of Storage usage (set to -1 to disable).'
+    Type: Number
+    Default: 80
+    MinValue: -1
+    MaxValue: 100
+
+Conditions:
+  HasRdsCpuSaturationThreshold: !Not [!Equals [!Ref RdsCpuSaturationThreshold, '-1']]
+  HasRdsMemorySaturationThreshold: !Not [!Equals [!Ref RdsMemorySaturationThreshold, '-1']]
+  HasRdsStorageSaturationThreshold: !Not [!Equals [!Ref RdsStorageSaturationThreshold, '-1']]
+  IsEmailProvided: !Not [!Equals [!Ref AlarmsEmail, ""]]
+Resources:
+  ##########################################################################
+  #                                                                        #
+  #                                 TOPIC                                  #
+  #                                                                        #
+  ##########################################################################
+  Topic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: RDS-Alerts
+      DisplayName: RDS-Alerts
+
+  SNSSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: IsEmailProvided
+    Properties:
+      TopicArn: !Ref Topic
+      Endpoint: !Ref AlarmsEmail
+      Protocol: "email"
+      Region: !Ref AWS::Region
+
+  TopicPolicy:
+    Type: 'AWS::SNS::TopicPolicy'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F18
+            reason: "Limited Principal in condition"
+    Properties:
+      PolicyDocument:
+        Id: Id1
+        Version: '2012-10-17'
+        Statement:
+        - Sid: Sid1
+          Effect: Allow
+          Principal:
+            Service:
+            - 'events.amazonaws.com' # Allow CloudWatch Events
+            - 'rds.amazonaws.com' # Allow RDS Events
+          Action: 'sns:Publish'
+          Resource: !Ref Topic
+        - Sid: Sid2
+          Effect: Allow
+          Principal:
+            AWS: '*' # Allow CloudWatch Alarms
+          Action: 'sns:Publish'
+          Resource: !Ref Topic
+          Condition:
+            StringEquals:
+              'AWS:SourceOwner': !Ref 'AWS::AccountId'
+      Topics:
+      - !Ref Topic
+
+ 
+  ##########################################################################
+  #                                                                        #
+  #                                 ALARMS                                 #
+  #                                                                        #
+  ##########################################################################
+ 
+# Saturation
+  RdsCpuSaturation:
+    Condition: HasRdsCpuSaturationThreshold
+    Type: "AWS::CloudWatch::Alarm"
+    Properties:
+      AlarmDescription: "RDS CPU utilization high"
+      AlarmActions: 
+        - !Ref Topic
+      AlarmName: !Sub "RdsCpuUtilization-${Stage}"
+      ComparisonOperator: "GreaterThanThreshold"
+      EvaluationPeriods: 5
+      Dimensions:
+      - Name: "DBInstanceIdentifier"
+        Value: !Ref DBInstanceID
+      MetricName: "CPUUtilization"
+      Namespace: "AWS/RDS"
+      Period: 60
+      Threshold: !Ref RdsCpuSaturationThreshold #in percent
+      TreatMissingData: "ignore"
+      Unit: "Percent"
+      Statistic: "Average"
+  RdsMemorySaturation:
+    Type: "AWS::CloudWatch::Alarm"
+    Condition: HasRdsMemorySaturationThreshold
+    Properties:
+      AlarmDescription: "RDS memory utilization high"
+      AlarmName: !Sub "RdsMemoryUtilization-${Stage}"
+      AlarmActions: 
+        - !Ref Topic
+      ComparisonOperator: "GreaterThanThreshold"
+      EvaluationPeriods: 5
+      Metrics:
+      - Expression: !Sub "(1 - mm0m0/(${DBAllocatedMemory}*1024^3))*100"
+        Id: "expr1m0"
+        Label: "MemoryUtilizationPercentage"
+        Period: 60
+        ReturnData: true
+      - Id: "mm0m0"
+        Label: "FreeableMemory"
+        MetricStat:
+          Metric:
+            Dimensions:
+            - Name: "DBInstanceIdentifier"
+              Value: !Ref DBInstanceID
+            MetricName: "FreeableMemory"
+            Namespace: "AWS/RDS"
+          Period: 60
+          Stat: "Average"
+          Unit: "Bytes"
+        ReturnData: false
+      Threshold: !Ref RdsMemorySaturationThreshold #in percent
+      TreatMissingData: "ignore"
+  RdsStorageSaturation:
+    Condition: HasRdsStorageSaturationThreshold
+    Type: "AWS::CloudWatch::Alarm"
+    Properties:
+      AlarmDescription: "RDS storage utilization high"
+      AlarmName: !Sub "RdsStorageUtilization-${Stage}"
+      AlarmActions: 
+        - !Ref Topic
+      ComparisonOperator: "GreaterThanThreshold"
+      EvaluationPeriods: 5
+      Metrics:
+      - Expression: !Sub "(1 - mm0m0/(${DBAllocatedStorage}*1024^3))*100"
+        Id: "expr1m0"
+        Label: "StorageUtilizationPercentage"
+        Period: 60
+        ReturnData: true
+      - Id: "mm0m0"
+        Label: "FreeStorageSpace"
+        MetricStat:
+          Metric:
+            Dimensions:
+            - Name: "DBInstanceIdentifier"
+              Value: !Ref DBInstanceID
+            MetricName: "FreeStorageSpace"
+            Namespace: "AWS/RDS"
+          Period: 60
+          Stat: "Average"
+          Unit: "Bytes"
+        ReturnData: false
+      Threshold: !Ref RdsStorageSaturationThreshold
+      TreatMissingData: "ignore"
+
+  ##########################################################################
+  #                                                                        #
+  #                                 EVENTS                                 #
+  #                                                                        #
+  ##########################################################################
+  EventSubscription:
+    Type: 'AWS::RDS::EventSubscription'
+    Properties:
+      EventCategories: 
+        - "configuration change"
+        - failure
+        - deletion
+      SnsTopicArn: !Ref Topic
+      SourceIds: [!Ref DBInstanceID]
+      SourceType: 'db-instance'
+
+
+##########################################################################
+  #                                                                        #
+  #                                 OUTPUTS                                #
+  #                                                                        #
+  ##########################################################################
+Outputs:
+  StackName:
+    Description: 'Stack name.'
+    Value: !Sub '${AWS::StackName}'
+  StackVersion:
+    Description: 'Stack version.'
+    Value: '1.5.1'

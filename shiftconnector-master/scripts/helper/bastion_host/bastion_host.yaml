@@ -1,0 +1,120 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: amanasmartnotes ec2 infrastructure setup
+
+Parameters:
+  SecurityGroup:
+    Description: Security Group
+    Type: String
+  SubnetId:
+    Description: Subnet of the Bastion Host
+    Type: String
+  DBDomain:
+    Description: Domain of the RDS
+    Type: String
+  DBPort:
+    Description: Domain of the RDS
+    Type: String
+Resources:
+
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub EC2InstanceProfile-${AWS::StackName}
+      Path: "/"
+      Roles:
+        - !Ref EC2Role
+  BastionEc2Instance:
+    Type: AWS::EC2::Instance
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          haproxy:
+            - haproxy_config
+            - haproxy_start
+        haproxy_config:
+          files:
+            /etc/haproxy/haproxy.cfg :
+              content: !Sub
+                - |
+                  global
+                      daemon
+                      maxconn 256
+                  defaults
+                      mode tcp
+                      timeout connect 1200000ms
+                      timeout client 1200000ms
+                      timeout server 1200000ms
+                  listen rds
+                      bind *:${DBPort}
+                      server server1 ${DBDomain} maxconn 32
+                - DBDomain: !Ref DBDomain
+                  DBPort: !Ref DBPort
+
+              mode: '0644'
+              owner: haproxy
+              group: haproxy
+        haproxy_start:
+          commands:
+            starthaproxy:
+              cwd: /tmp
+              command: 'systemctl enable haproxy; service haproxy restart; service rsyslog restart'
+
+    Properties:
+      ImageId: '{{resolve:ssm:/kelvin/service/ami-latest/cov-amazon-linux-image}}'
+      InstanceType: t3.micro
+      BlockDeviceMappings:
+      - DeviceName: /dev/sda1
+        Ebs:
+          VolumeSize: 2
+          VolumeType: gp3
+          Encrypted : true
+          DeleteOnTermination: true
+      Monitoring: false
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: false
+          DeviceIndex: "0"
+          SubnetId: !Ref SubnetId
+          GroupSet:
+            - !Ref SecurityGroup
+      Tags:
+        - Key: "Name"
+          Value: "Bastion Host"
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          yum update -y
+          yum install -y haproxy
+          yum install -y java 
+          wget https://github.com/ThoughtWorksInc/infra-problem.git
+          make libs
+          make clean all
+          cd front-end/public && ./serve.py 
+          make test  
+          java -jar front-end.jar
+          java -jar quotes.jar
+          java -jar newsfeed.jar 
+          /usr/bin/aws configure set region ${AWS::Region}
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource BastionEc2Instance --configsets haproxy --region ${AWS::Region}
+
+          # Signal the status from cfn-init
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource BastionEc2Instance --region ${AWS::Region}
+
+
+              

@@ -1,0 +1,233 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'EC2 instance alarms'
+Parameters:
+  Topic: # ARN
+    Type: String
+  InstanceId:
+    Type: String
+  InstanceType:
+    Type: String
+  CPUUtilizationThreshold:
+    Type: Number
+    Default: 80
+    MinValue: -1
+    MaxValue: 100
+  NetworkUtilizationThreshold:
+    Type: Number
+    Default: 2
+    MinValue: -1
+    MaxValue: 100
+  MemoryUtilPercentThreshold:
+    Type: Number
+    Default: 90
+    MinValue: -1
+    MaxValue: 100
+  DiskUsedPercentThreshold:
+    Type: Number
+    Default: 10
+    MinValue: -1
+    MaxValue: 100
+  MetricNameSpace:
+    Type: String
+    Default: AWS/EC2
+  CustomNameSpace:
+    Type: String
+    Default: CWAgentWin
+    
+Conditions:
+  HasCPUUtilizationThreshold: !Not [!Equals [!Ref CPUUtilizationThreshold, '-1']]
+  HasNetworkUtilizationThreshold: !Not [!Equals [!Ref NetworkUtilizationThreshold, '-1']]
+  HasMemoryUtilPercentThreshold: !Not [!Equals [!Ref MemoryUtilPercentThreshold, '-1']]
+  HasDiskUsedPercentThreshold: !Not [!Equals [!Ref DiskUsedPercentThreshold, '-1']]
+
+Resources:
+  ##########################################################################
+  #                                 Utilization                            #
+  ##########################################################################
+  CPUUtilizationTooHighAlarm:
+    Condition: HasCPUUtilizationThreshold
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmActions:
+      - !Ref Topic
+      AlarmName: !Sub CpuUtilizationAlarm-${InstanceId}
+      AlarmDescription: 'Average CPU utilization over last 10 minutes too high.'
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+      - Name: InstanceId
+        Value: !Ref InstanceId
+      EvaluationPeriods: 1
+      MetricName: CPUUtilization
+      Namespace: !Ref MetricNameSpace
+      OKActions:
+      - !Ref Topic
+      Period: 600
+      Statistic: Average
+      Threshold: !Ref CPUUtilizationThreshold
+      TreatMissingData: notBreaching
+  NetworkUtilizationTooHighAlarm:
+    Condition: HasNetworkUtilizationThreshold
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmName: !Sub NetworkUtilizationTooHighAlarm-${InstanceId}
+      AlarmActions:
+      - !Ref Topic
+      AlarmDescription: 'Average Network In+Out utilization over last 10 minutes too high.'
+      ComparisonOperator: GreaterThanThreshold
+      EvaluationPeriods: 1
+      Metrics:
+      - Id: in
+        Label: In
+        MetricStat:
+          Metric:
+            Namespace: !Ref MetricNameSpace
+            MetricName: NetworkIn # bytes out per minute
+            Dimensions:
+            - Name: InstanceId
+              Value: !Ref InstanceId
+          Period: 600
+          Stat: Average
+          Unit: Bytes
+        ReturnData: false
+      - Id: out
+        Label: Out
+        MetricStat:
+          Metric:
+            Namespace: !Ref MetricNameSpace
+            MetricName: NetworkOut # bytes out per minute
+            Dimensions:
+            - Name: InstanceId
+              Value: !Ref InstanceId
+          Period: 600
+          Stat: Average
+          Unit: Bytes
+        ReturnData: false
+      - Expression: '(in+out)/60*8/1000/1000/1000' # to Gbit/s
+        Id: inout
+        Label: 'In+Out'
+        ReturnData: true
+      OKActions:
+      - !Ref Topic
+      Threshold: !Ref NetworkUtilizationThreshold # in Gbit/s
+      TreatMissingData: notBreaching
+  ##########################################################################
+  #                                 Saturation                             #
+  ##########################################################################
+  MemoryUsedPercentagAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Condition: HasMemoryUtilPercentThreshold
+    Properties:
+      AlarmActions:
+      - !Ref Topic
+      AlarmName: !Sub MemoryUsedPercentagAlarm-${InstanceId}
+      AlarmDescription: 'Memory Usage utilization over last 10 minutes too high.'
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+      - Name: InstanceId
+        Value: !Ref InstanceId
+      - Name: objectname
+        Value: Memory
+      - Name: InstanceType
+        Value: !Ref InstanceType
+      EvaluationPeriods: 1
+      MetricName: "Memory % Committed Bytes In Use"
+      Namespace: !Ref CustomNameSpace
+      OKActions:
+      - !Ref Topic
+      Period: 600
+      Statistic: Average
+      Threshold: !Ref MemoryUtilPercentThreshold # in Percent
+      TreatMissingData: notBreaching
+  DiskUsedPercentageAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Condition: HasDiskUsedPercentThreshold
+    Properties:
+      AlarmActions:
+      - !Ref Topic
+      AlarmName: !Sub DiskUsedPercentageAlarm-${InstanceId}
+      AlarmDescription: 'Disk Capacity reached.'
+      ComparisonOperator: LessThanThreshold
+      Dimensions:
+      - Name: InstanceId
+        Value: !Ref InstanceId
+      - Name: objectname
+        Value: LogicalDisk
+      - Name: InstanceType
+        Value: !Ref InstanceType
+      - Name: instance
+        Value: "C:"
+      MetricName: "LogicalDisk % Free Space"
+      Namespace: !Ref CustomNameSpace
+      Period: 600
+      Statistic: Average
+      EvaluationPeriods: 1
+      OKActions:
+      - !Ref Topic
+      Threshold: !Ref DiskUsedPercentThreshold # in Percent
+      TreatMissingData: notBreaching
+      
+  ##########################################################################
+  #                                 Errors                                 #
+  ##########################################################################
+  StatusCheckFailedAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmActions:
+      - !Ref Topic
+      AlarmName: !Sub StatusCheckFailedAlarm-${InstanceId}
+      AlarmDescription: 'EC2 instance status check or the system status check has failed.'
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+      - Name: InstanceId
+        Value: !Ref InstanceId
+      EvaluationPeriods: 1
+      MetricName: StatusCheckFailed
+      Namespace: !Ref MetricNameSpace
+      OKActions:
+      - !Ref Topic
+      Period: 600
+      Statistic: Sum
+      Threshold: 0
+      TreatMissingData: notBreaching
+
+  ##########################################################################
+  #                                 OUTPUTS                                #
+  ##########################################################################
+Outputs:
+  StackName:
+    Description: 'Stack name.'
+    Value: !Sub '${AWS::StackName}'
+  CPUUtilizationTooHighAlarm:
+    Description: 'Arn of Alert.'
+    Condition: HasCPUUtilizationThreshold
+    Value: !GetAtt CPUUtilizationTooHighAlarm.Arn
+  NetworkUtilizationTooHighAlarm:
+    Description: 'Arn of Alert.'
+    Condition: HasNetworkUtilizationThreshold
+    Value: !GetAtt NetworkUtilizationTooHighAlarm.Arn
+  MemoryUsedPercentagAlarm:
+    Description: 'Arn of Alert.'
+    Condition: HasMemoryUtilPercentThreshold
+    Value: !GetAtt MemoryUsedPercentagAlarm.Arn
+  DiskUsedPercentageAlarm:
+    Description: 'Arn of Alert.'
+    Condition: HasDiskUsedPercentThreshold
+    Value: !GetAtt DiskUsedPercentageAlarm.Arn
+  StatusCheckFailedAlarm:
+    Description: 'Arn of Alert.'
+    Value: !GetAtt StatusCheckFailedAlarm.Arn
+  InstanceId:
+    Description: 'Instance ID for the created CloudWatch alarms'
+    Value: !Ref InstanceId
+  AlarmsArray:
+    Value: !Join [",",
+      [
+      !If [HasCPUUtilizationThreshold, !Sub '"${CPUUtilizationTooHighAlarm.Arn}"', ""],
+      !If [HasNetworkUtilizationThreshold, !Sub '"${NetworkUtilizationTooHighAlarm.Arn}"', ""],
+      !If [HasMemoryUtilPercentThreshold, !Sub '"${MemoryUsedPercentagAlarm.Arn}"', ""],
+      !If [HasDiskUsedPercentThreshold, !Sub '"${DiskUsedPercentageAlarm.Arn}"', ""],
+      !Sub '"${StatusCheckFailedAlarm.Arn}"'
+      ]
+    ]
+    Export:
+      Name: !Sub ${InstanceId}-AlarmsArray

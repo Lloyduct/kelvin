@@ -1,0 +1,18 @@
+{
+    "Parameters":  {
+                       "Git2S3BucketName":  "shiftconnector-git2s3-output-bucket",
+                       "SourceObjectKey":  "jobs/shiftconnector_233/shiftconnector/master/lemongrass_shiftconnector_233_shiftconnector.zip",
+                       "CodePipelineNonProdCrossAccountRoleArn":  "arn:aws:iam::223713705977451:role/CodePipelineCrossAccountRole-dev",
+                       "NonProdAccountId":  "223713705977451",
+                       "Git2S3BucketName-qa":  "shiftconnector-git3-output-bucket", 
+                       "SourceObjectKey_qa":  "jobs/shiftconnector_233/shiftconnector/master/lemongrass_shiftconnector_233_shiftconnector.zip",
+                       "CodePipelineQAProdCrossAccountRoleArn":  "arn:aws:iam::223713705977451:role/CodePipelineCrossAccountRole-dev",
+                       "QAProdAccountId":  "223713705977451",
+                       "ProdAccountId":  "223554250442952",
+                       "CodePipelineProdCrossAccountRoleArn":  "arn:aws:iam::223554250442952:role/CodePipelineCrossAccountRole-prod",
+                       "ApplicationName":  "shiftconnector",
+                       "GitLabTargetAddressExportValue":  "shiftconnector-core-automation-Git2S3SnsArn",
+                       "CloudFormationDeploymentRoleName":  "shiftconnector-deployrole",
+                       "AccountType":  "legacy"
+                   }
+}

@@ -1,0 +1,84 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Core automation resources
+Parameters: 
+
+  Git2S3Version:
+    Description: Version of Git2S3 in Service Catalog
+    Type: String
+
+  Git2S3OutputBucketName:
+    Description: Name of the Git2S3 output bucket (must be globally unique)
+    Type: String
+  Git2S3ProvisionedProductName:
+    Description: Name of the Provisioned Bucket, should be like Git2S3-AppName.
+    Type: String
+  Git2S3IntegrationApiKeyArn:
+    Description: Git2S3IntegrationArn for Git2S3.
+    Type: String
+  SSORole:
+    Description: Admin Role to set PortfolioPrincipalAssociation
+    Type: String
+  CEPPortfolioID:
+    Description: ID of the CEP portfolio, as it is different in each region
+    Type: String
+  ServiceName:
+    Description: Name of the Service / Project / Application
+    Type: String
+  AccountType:
+    Type: String
+    Description: Used to determine which resources needs to be deployed since CEP Portfolio is already imported in Legacy automation account
+    AllowedValues:
+      - devops
+      - legacy
+
+Conditions:
+  IsDevops: !Equals
+    - !Ref AccountType
+    - "devops"
+
+Resources:
+  ImportCEPPortfolio:
+    Condition: IsDevops
+    Type: AWS::ServiceCatalog::PortfolioPrincipalAssociation
+    Properties: 
+      PortfolioId: !Ref CEPPortfolioID
+      PrincipalARN: !Ref SSORole
+      PrincipalType: IAM
+  Git2S3:
+    Type: AWS::ServiceCatalog::CloudFormationProvisionedProduct
+    Properties:
+      ProductName: Git2S3
+      ProvisionedProductName: !Ref Git2S3ProvisionedProductName
+      ProvisioningArtifactName: !Ref Git2S3Version
+      ProvisioningParameters:
+      - Key: ExcludeGit
+        Value: "False"
+      - Key: OutputBucketName
+        Value: !Ref Git2S3OutputBucketName
+      - Key: IntegrationApiKey
+        Value: !Sub '{{resolve:secretsmanager:${Git2S3IntegrationApiKeyArn}::GitIntegrationApiKey}}'
+      - Key: SecretToken
+        Value: !Sub '{{resolve:secretsmanager:${Git2S3Secret}::secret_token}}'
+
+  Git2S3Secret:
+    Type: AWS::SecretsManager::Secret
+    Properties: 
+      Description: Secret for API webkook of Git2S3
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: 'secret_token'
+        PasswordLength: 10
+        ExcludePunctuation: True
+      Name: !Sub "Git2S3Secret-${ServiceName}"
+  
+Outputs:
+  Git2S3Secret:
+    Description: ARN of the secret token used for Git2S3 webhook authentication
+    Value: !Ref Git2S3Secret
+    Export:
+      Name: !Sub "${AWS::StackName}-Git2S3Secret"
+  Git2S3GitLabIntegrationSnsTopicArn:
+    Description: Arn of SNS for the pipeline
+    Value: !GetAtt  Git2S3.Outputs.GitLabIntegrationSnsTopicArn
+    Export:
+      Name: !Sub "${AWS::StackName}-Git2S3SnsArn"

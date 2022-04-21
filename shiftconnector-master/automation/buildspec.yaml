@@ -1,0 +1,34 @@
+version: 0.2
+phases:
+  install:
+    runtime-versions:
+      python: 3.8
+      ruby: 2.6
+    commands:
+    - pip install boto3 cfn-flip cfn-lint --quiet
+    - gem install cfn-nag
+  pre_build:
+    commands:
+    - echo "Build started on $(date)"
+    - echo "Source Version ${CODEBUILD_RESOLVED_SOURCE_VERSION}"
+    - bash scripts/linter/run-linters.sh
+    
+  build:
+    commands:
+    - echo "build"
+    - aws cloudformation package --template-file infrastructure/infrastructure.yaml --s3-bucket $BUCKET_NAME --output-template-file packaged_infrastructure.yaml
+
+  post_build:
+    commands:
+    - echo "post-build"
+
+artifacts:
+  files:
+  - packaged_infrastructure.yaml
+  - infrastructure/config/dev.conf
+  - infrastructure/config/qa.conf
+  - infrastructure/config/prod.conf
+  - InstanceScheduler/config/scheduler.conf
+  - InstanceScheduler/aws-instance-scheduler.json
+  - InstanceScheduler/schedules.yaml
+

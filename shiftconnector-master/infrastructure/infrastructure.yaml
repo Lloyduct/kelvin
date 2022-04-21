@@ -1,0 +1,311 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: "Application Stack"
+
+Parameters:
+  Stage:
+    Type: "String"
+  ServiceName:
+    Type: "String"
+  AlarmsEmail:
+    Default: ""
+    Type: String
+    Description: if provided, an e-mail will be sent to the given address, when the healthcheck alarm is triggered
+##### RDS Parameter
+  DBInstanceType:
+    Description: Instance Type size parameter
+    Type: String
+  DBSnapshotIdentifier:
+    Description: (OPTIONAL) Snapshot identifier to restore the RDS database from
+    Type: String
+    Default: ""
+  DBStorage:
+    Description: DB Storage in GB
+    Type: String
+##### RDS Parameter END
+
+##### EC2 Parameter
+  EnableEC2Autorecover:
+    Description: if enabled, the system healthcheck of the EC2 instance will be performed. In case of errors the instance will be restarted.
+    Type: String
+    AllowedValues: [true, false]
+    Default: true
+  BackupRetentionPeriod:
+    Type: Number
+    Description: Days to retain snapshots of EC2
+    Default: 7
+  EC2RestoreAMI:
+    Description: (OPTIONAL) AMI identifier to restore the EC2 instance from
+    Type: String
+    Default: ""
+  EC2InstanceType:
+    Description: Instance Type size parameter
+    Type: String
+  EnableEnhancedMonitoring:
+    Description: Provide metrics in real time for the operating system (OS) that your DB instance runs on.
+    Type: String
+    AllowedValues: [true, false]
+    Default: true
+  OSPatchingTimeWindow:
+    Description: Cron or rate expressing which defines, when to auto-patch windows instances
+    Type: String
+    Default: "cron(00 00 ? * * *)"
+  EC2VolumeSize:
+    Description: Volume size of the EC2
+    Type: String
+  EC2privateIPV4:
+    Description: Private Static ip4 Address of Ec2
+    Type: String
+  ShiftconnectorCWAgentConfigName:
+    Type: String
+    Description: name of Cloudwatch Agent config store in System Manager Store Paratemer
+  ShiftconnectorMainLogGroupName:
+    Type: String
+    Description: name of Shiftconnector Main Log Group
+  ShiftconnectorInterfacesLogGroupName:
+    Type: String
+    Description: name of Shiftconnector Interfaces Log Group
+  ##### EC2 Parameter END
+
+Conditions:
+  IsProd: !Equals [ !Ref Stage, 'prod' ]
+  IsQa: !Equals [ !Ref Stage, 'qa' ]
+  IsDev: !Equals [ !Ref Stage, 'dev' ]
+
+
+Mappings:
+  MaintenanceConfig:
+    DeletionPolicies:
+      DeleteLogsAfterDays: 365
+    Ec2:
+      PatchTag: "WindowsServer"
+      BackupTag: "ec2defaultbackup"
+  NetworkConfig:
+    qa:
+      PrivateSubnetA: "subnet-0778d6b195666e3d6"
+      PrivateSubnetB: "subnet-065f1f5e02b6f57bc"
+      PrivateSubnetC: "subnet-0a87e8138b7fdab98"
+      HostedZoneName: "71.aws.glpoly.net"
+      HostedZoneId: "Z052730735SOQO3DTCULX"
+      VpcName: "CovDefault"
+    dev:
+      PrivateSubnetA: "subnet-0778d6b195666e3d6"
+      PrivateSubnetB: "subnet-065f1f5e02b6f57bc"
+      PrivateSubnetC: "subnet-0a87e8138b7fdab98"
+      HostedZoneName: "71.aws.glpoly.net"
+      HostedZoneId: "ZX"
+      VpcName: "CovDefault"
+    prod:
+      PrivateSubnetA: "subnet-068c2109bdb136378"
+      PrivateSubnetB: "subnet-083624dc97bba7a77"
+      PrivateSubnetC: "subnet-0e5baa932cfa8b877"
+      HostedZoneName: "55.aws.glpoly.net"
+      HostedZoneId: "Z08"
+      VpcName: "CovDefault"
+
+Resources:
+
+# ############## EC2 resources  #####################
+  EC2:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: "ec2/ec2.yaml"
+      Parameters:
+        Stage: !Ref Stage
+        VpcName: !FindInMap [NetworkConfig, !Ref Stage, VpcName]
+        AlarmsEmail: !Ref AlarmsEmail
+        EnableEC2Autorecover: !Ref EnableEC2Autorecover
+        EC2RestoreAMI: !Ref EC2RestoreAMI
+        ServiceName: !Ref ServiceName
+        Subnet:
+          Fn::ImportValue:
+            !Sub
+              - "cov-network-${VpcName}-intranet-subnet-a-id"
+              - VpcName: !FindInMap [NetworkConfig, !Ref Stage, VpcName]
+        EC2InstanceType: !Ref EC2InstanceType
+        EC2VolumeSize: !Ref EC2VolumeSize
+        PatchTag: !FindInMap [MaintenanceConfig, Ec2, PatchTag]
+        BackupTag: !FindInMap [MaintenanceConfig, Ec2, BackupTag]
+        HostedZoneId:  !FindInMap [NetworkConfig, !Ref Stage, HostedZoneId]
+        privateIPV4: !Ref EC2privateIPV4
+        ShiftconnectorCWAgentConfigName: !Ref ShiftconnectorCWAgentConfigName
+        ShiftconnectorMainLogGroupName: !Ref ShiftconnectorMainLogGroupName
+        ShiftconnectorInterfacesLogGroupName: !Ref ShiftconnectorInterfacesLogGroupName
+
+  EC2Backup:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: "ec2/ec2_backup.yaml"
+      Parameters:
+        BackupRetentionPeriod: !Ref BackupRetentionPeriod
+        ServiceName: !Ref ServiceName
+        Stage: !Ref Stage
+        BackupTag: !FindInMap [MaintenanceConfig, Ec2, BackupTag]
+
+  EC2Patching:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: "ec2/ec2_patching.yaml"
+      Parameters:
+        Stage: !Ref Stage
+        OSPatchingTimeWindow: !Ref OSPatchingTimeWindow
+        DeleteLogsAfterDays: !FindInMap [MaintenanceConfig, DeletionPolicies, DeleteLogsAfterDays]
+        ServiceName: !Ref ServiceName
+        PatchTag: !FindInMap [MaintenanceConfig, Ec2, PatchTag]
+
+  BasicMonitoring:
+    Type: AWS::CloudFormation::Stack
+    Condition: IsProd
+    Properties:
+      TemplateURL: "ec2/ec2_mon.yaml"
+      Parameters:
+        InstanceIds: !GetAtt EC2.Outputs.EC2Id
+        InstanceTypes: !Ref EC2InstanceType
+        AlarmsEmail: !Ref AlarmsEmail
+
+  PasswordRotationLambda:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: "ec2/ec2_password-rotation.yaml"
+      Parameters:
+        ServiceName: !Ref ServiceName
+        Stage: !Ref Stage
+        EC2Id: !GetAtt EC2.Outputs.EC2Id
+
+############## End of EC2 resources  #####################
+
+
+##############  RDS resources  #####################
+  RDS:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: "rds/rds.yaml"
+      Parameters:
+        Stage: !Ref Stage
+        VpcId: 
+          Fn::ImportValue:
+            !Sub
+              - "cov-network-${VpcName}-vpc-id"
+              - VpcName: !FindInMap [NetworkConfig, !Ref Stage, VpcName]
+        EnableEnhancedMonitoring: !Ref EnableEnhancedMonitoring
+        BackupRetentionPeriod: !Ref BackupRetentionPeriod
+        DBSnapshotIdentifier: !Ref DBSnapshotIdentifier
+        EC2SecurityGroup: !GetAtt EC2.Outputs.EC2SecurityGroup
+        HostedZoneId:  !FindInMap [NetworkConfig, !Ref Stage, HostedZoneId]
+        ServiceName: !Ref ServiceName
+        # CHANGE SUBNET AS REQUIRED!!!!
+        SubnetA: !FindInMap [NetworkConfig, !Ref Stage, PrivateSubnetA]
+        SubnetB: !FindInMap [NetworkConfig, !Ref Stage, PrivateSubnetB]
+        DBInstanceType: !Ref DBInstanceType
+        DBStorage: !Ref DBStorage
+
+  RDSMonitoringStack:
+    Type: AWS::CloudFormation::Stack
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            - W3005
+    Properties:
+      TemplateURL: "rds/rds_mon.yaml"
+      Parameters:
+        DBInstanceID: !GetAtt RDS.Outputs.DBId
+        DBAllocatedStorage: !Ref DBStorage
+        DBAllocatedMemory: !If [IsProd, 128, 32]
+        Stage: !Ref Stage
+        AlarmsEmail: !Ref AlarmsEmail
+############## End of RDS resources  #####################
+
+
+
+############## AWS Instance Scheduler  #####################
+
+  AWSInstanceScheduler:
+    Type: AWS::CloudFormation::Stack
+    Condition: IsQa
+    Properties:
+      TemplateURL: "instance_scheduler/aws_instance_scheduler.json"
+      Parameters:
+        CustomStackName: "AWSInstanceScheduler"
+        TagName: "Schedule"
+        ScheduledServices: "Both"
+        ScheduleRdsClusters: "No"
+        CreateRdsSnapshot: "Yes"
+        SchedulingActive: "Yes"
+        Regions: "eu-central-1"
+        DefaultTimezone: "Europe/Berlin"
+        EnableSSMMaintenanceWindows: "Yes"
+        ScheduleLambdaAccount: "Yes"
+        CrossAccountRoles: ""
+        Trace: "No"
+        LogRetentionDays: "30"
+        UseCloudWatchMetrics: "No"
+        SchedulerFrequency: "5"
+        MemorySize: "128"
+        StartedTags: ""
+        StoppedTags: ""
+
+  AWSInstanceSchedules:
+    Type: AWS::CloudFormation::Stack
+    Condition: IsQa
+    Properties:
+      TemplateURL: "instance_scheduler/schedules.json"
+      Parameters:
+        ServiceToken: !GetAtt AWSInstanceScheduler.Outputs.ServiceInstanceScheduleServiceToken
+  
+  AWSInstanceScheduler:
+    Type: AWS::CloudFormation::Stack
+    Condition: IsDev
+    Properties:
+      TemplateURL: "instance_scheduler/aws_instance_scheduler.json"
+      Parameters:
+        CustomStackName: "AWSInstanceScheduler"
+        TagName: "Schedule"
+        ScheduledServices: "Both"
+        ScheduleRdsClusters: "No"
+        CreateRdsSnapshot: "Yes"
+        SchedulingActive: "Yes"
+        Regions: "eu-central-1"
+        DefaultTimezone: "Europe/Berlin"
+        EnableSSMMaintenanceWindows: "Yes"
+        ScheduleLambdaAccount: "Yes"
+        CrossAccountRoles: ""
+        Trace: "No"
+        LogRetentionDays: "30"
+        UseCloudWatchMetrics: "No"
+        SchedulerFrequency: "5"
+        MemorySize: "128"
+        StartedTags: ""
+        StoppedTags: ""
+
+  AWSInstanceSchedules:
+    Type: AWS::CloudFormation::Stack
+    Condition: IsDev
+    Properties:
+      TemplateURL: "instance_scheduler/schedules.json"
+      Parameters:
+        ServiceToken: !GetAtt AWSInstanceScheduler.Outputs.ServiceInstanceScheduleServiceToken
+############## End of AWS Instance Scheduler  #####################
+
+############## Begin of SES ##########################
+
+  SES:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: "common/ses.yaml"
+      Parameters:
+        Stage: !Ref Stage
+        ServiceName: !Ref ServiceName
+
+############## End of SES ############################
+############## Begin of AD ##########################
+
+  AD:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: "common/ad.yaml"
+      Parameters:
+        Stage: !Ref Stage
+        ServiceName: !Ref ServiceName
+
+############## End of SES ############################

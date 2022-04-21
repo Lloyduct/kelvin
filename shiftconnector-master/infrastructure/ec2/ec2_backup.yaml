@@ -1,0 +1,81 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Ec2 infrastructure backup setup
+
+Parameters:
+  BackupRetentionPeriod:
+    Type: Number
+    Description: Days to retain snapshots of EC2
+  ServiceName:
+    Description: The name of the application to roll out
+    Type: String
+  Stage:
+    Description: Stage of the application
+    Type: String
+  BackupTag:
+    Description: Tag to identify ec2 for backups
+    Type: String
+
+
+Resources:
+  EC2BackupVault:
+    Type: "AWS::Backup::BackupVault"
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            - E3035 
+            - W3011
+    DeletionPolicy: Retain
+    Properties:
+      BackupVaultName: !Sub "${ServiceName}-${Stage}-EC2BackupVault"
+
+  EC2BackupPlan:
+    Type: "AWS::Backup::BackupPlan"
+    Properties:
+      BackupPlan:
+      #### REMOVE IF UNIX EC2 #####
+        AdvancedBackupSettings:
+          - BackupOptions:
+              WindowsVSS: enabled
+            ResourceType: EC2
+      ##### WINDOWS ONLY #####
+        BackupPlanName: !Sub "${ServiceName}-${Stage}-EC2BackupPlan"
+        BackupPlanRule:
+          - RuleName: !Sub "${ServiceName}-${Stage}-EC2BackupRule"
+            TargetBackupVault: !Ref EC2BackupVault
+            ScheduleExpression: "cron(0 3 ? * * *)"
+            Lifecycle:
+              DeleteAfterDays: !Ref BackupRetentionPeriod
+            StartWindowMinutes: 60
+            CompletionWindowMinutes: 120
+
+  EC2BackupRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - backup.amazonaws.com
+              Action:
+                - "sts:AssumeRole"
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup
+          - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores
+        Tags:
+          - Key: Name
+            Value: !Sub "${ServiceName}-${Stage}-BackupRole"
+
+  EC2BackupSelection:
+    Type: "AWS::Backup::BackupSelection"
+    Properties:
+      BackupSelection:
+        SelectionName: !Sub "${ServiceName}-${Stage}-EC2BackupSelection"
+        IamRoleArn: !GetAtt EC2BackupRole.Arn
+        ListOfTags:
+          - ConditionType: "STRINGEQUALS"
+            ConditionKey: "BackupSelector"
+            ConditionValue: !Ref BackupTag
+      BackupPlanId: !Ref EC2BackupPlan

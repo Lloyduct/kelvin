@@ -1,0 +1,182 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Ec2 infrastructure setup
+
+Parameters:
+  Stage:
+    Description: Stage of the application
+    Type: String
+  OSPatchingTimeWindow:
+    Description: Cron or rate expression which defines, when to auto-patch windows instances
+    Type: String
+  DeleteLogsAfterDays:
+    Type: Number
+    Description: Days to retain log files in maintenance bucket
+  ServiceName:
+    Description: The name of the application to roll out
+    Type: String
+  PatchTag:
+    Description: Tag to identify relevant Ec2 instances
+    Type: String
+
+Resources:
+  WindowsOSMaintenanceWindow:
+    Type: AWS::SSM::MaintenanceWindow
+    Properties:
+      AllowUnassociatedTargets: false
+      Cutoff: 1
+      Description: Maintenance Window to update SSM Agent
+      Duration: 2
+      Name: !Sub "${ServiceName}-${Stage}-WindowsOSMaintenanceWindow"
+      Schedule: !Ref OSPatchingTimeWindow
+      ScheduleTimezone: CET
+
+  MaintWindowIamRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub "${ServiceName}-windowspatching-role-${Stage}"
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "ssm.amazonaws.com"
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AmazonSSMMaintenanceWindowRole"
+
+
+  MaintWindowIamPolicy:
+    Type: "AWS::IAM::Policy"
+    Properties:
+      PolicyName: !Sub "${ServiceName}-windowspatching-policy-${Stage}"
+      PolicyDocument:
+        Statement:
+          - Effect: "Allow"
+            Action: "iam:PassRole"
+            Resource:
+              Fn::GetAtt:
+                - "MaintWindowIamRole"
+                - "Arn"
+      Roles:
+        - Ref: "MaintWindowIamRole"
+
+  MaintenanceWindowTarget:
+    Type: AWS::SSM::MaintenanceWindowTarget
+    Properties:
+      WindowId: !Ref WindowsOSMaintenanceWindow
+      ResourceType: INSTANCE
+      Targets:
+      - Key: tag:PatchGroup
+        Values:
+          - !Ref PatchTag
+      OwnerInformation: OS AutoPatching
+      Name: !Sub "${ServiceName}-${Stage}-MaintenanceWindowTarget"
+      Description: Targets instances running Windows and application
+
+  MaintenanceLogsBucket:
+    Type: 'AWS::S3::Bucket'
+    ### Change to condition only on prod retain
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            - E3035 
+            - W3011
+    DeletionPolicy: Retain
+
+    Properties:
+      BucketName: !Sub ${ServiceName}-maintenance-logs-${Stage}
+      AccessControl: Private
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteContentAfterNDays
+            Status: 'Enabled'
+            ExpirationInDays: !Ref DeleteLogsAfterDays
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: aws:kms
+
+  ForceSSLBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: MaintenanceLogsBucket
+      PolicyDocument:
+        Statement:
+          - Action: "s3:*"
+            Effect: Deny
+            Principal:
+              AWS: "*"
+            Resource:
+              - !GetAtt MaintenanceLogsBucket.Arn
+              - !Sub '${MaintenanceLogsBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+        Version: "2012-10-17"
+
+  WindowsPatchBaseline:
+    Type: AWS::SSM::PatchBaseline
+    Properties:
+      Name: WindowsPatchBaseline
+      Description: Baseline containing all updates approved for Windows instances
+      OperatingSystem: WINDOWS
+      PatchGroups:
+      - WindowsServer
+      ApprovalRules:
+        PatchRules:
+          - ApproveAfterDays: 7
+            ComplianceLevel: HIGH
+            PatchFilterGroup:
+              PatchFilters:
+                - Key: MSRC_SEVERITY
+                  Values: 
+                    - Critical
+                    - Important
+          - ApproveAfterDays: 7
+            ComplianceLevel: CRITICAL
+            PatchFilterGroup:
+              PatchFilters:
+                - Key: MSRC_SEVERITY
+                  Values: 
+                    - Critical
+
+  PatchTask:
+    Type: AWS::SSM::MaintenanceWindowTask
+    Properties:
+      Description: Apply OS patches on instances in target
+      ServiceRoleArn:
+        Fn::GetAtt:
+          - "MaintWindowIamRole"
+          - "Arn"      
+      MaxConcurrency: "2"
+      MaxErrors: "1"
+      Priority: 1
+      TaskType: RUN_COMMAND
+      WindowId:
+        Ref: WindowsOSMaintenanceWindow
+      TaskArn: "AWS-RunPatchBaseline"
+      TaskInvocationParameters:
+        MaintenanceWindowRunCommandParameters:
+          OutputS3BucketName: !Ref MaintenanceLogsBucket
+          Parameters:
+            Operation:
+            - Install
+          ServiceRoleArn:
+            Fn::GetAtt:
+              - "MaintWindowIamRole"
+              - "Arn"
+      Targets:
+      - Key: WindowTargetIds
+        Values:
+        - Ref: MaintenanceWindowTarget

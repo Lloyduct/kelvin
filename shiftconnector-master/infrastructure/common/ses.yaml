@@ -1,0 +1,34 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: iims SES setup
+
+Parameters:
+  Stage:
+    Description: Environment name, dev/prod
+    Type: "String"
+
+  ServiceName:
+    Description: The name of the application to roll out
+    Type: String
+
+  SESVersionName:
+    Description: Version of the SES product
+    Type: String
+    Default: v0.0.9
+
+  ReplyAddress:
+    Description: Reply Address for SES
+    Type: String
+    Default: noreply@covestro.com
+
+Resources:
+  SES:
+    Type: AWS::ServiceCatalog::CloudFormationProvisionedProduct
+    Properties:
+      ProductName: AWS Simple Email Service Smtp Product
+      ProvisionedProductName: !Sub "${ServiceName}-ses-${Stage}"
+      ProvisioningArtifactName: !Ref SESVersionName
+      ProvisioningParameters:
+        - Key: ApplicationName
+          Value: !Sub "${ServiceName}-ses-${Stage}"
+        - Key: ReplyAddress
+          Value: !Ref ReplyAddress
