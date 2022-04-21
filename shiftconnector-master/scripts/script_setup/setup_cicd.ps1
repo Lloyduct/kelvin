@@ -209,7 +209,7 @@ function create_sso_profile {
     if(-Not ([string]::IsNullOrEmpty($accountId)) -and -not ($awsConfigContent | Where-Object {$_ -like "*$awsProfile*"})) 
     {
         # Concat AWS SSO Profile String
-        $loginSkeleton = "`n[profile $awsProfile]`nsso_start_url = https://covestro.awsapps.com/start#/`nsso_region = eu-west-1`nsso_account_id = $accountId`nsso_role_name = $SSORole`nregion = $awsRegion`noutput = json"
+        $loginSkeleton = "`n[profile $awsProfile]`nsso_start_url = https://kelvin.awsapps.com/start#/`nsso_region = eu-west-1`nsso_account_id = $accountId`nsso_role_name = $SSORole`nregion = $awsRegion`noutput = json"
 
         # Add SSO Log-In to aws config
         Add-Content -Path $awsconfigPath -Value $loginSkeleton
@@ -241,8 +241,8 @@ function generate_config_files()
     # Assemble repository ObjectKey
     $RepositorySSHorHTMLPath = $projectJson.RepositorySSHorHTML
 
-    if ($RepositorySSHorHTMLPath -like "https://gitlab.covestro.com*") {
-        $RepositoryPath = $RepositorySSHorHTMLPath.replace("https://gitlab.covestro.com/","")
+    if ($RepositorySSHorHTMLPath -like "https://gitlab.kelvin.com*") {
+        $RepositoryPath = $RepositorySSHorHTMLPath.replace("https://gitlab.kelvin.com/","")
     }elseif ($RepositorySSHorHTMLPath -like "git@gitlab.ssh*") {
         $RepositoryPath = $RepositorySSHorHTMLPath.split(":")[1]
     }else {
@@ -251,7 +251,7 @@ function generate_config_files()
     }
     # Remove .git ending
     $RepositoryPath = $RepositoryPath.Remove($RepositoryPath.length-4)
-    $projectJson.GeneratedValues.GitlabUrl = "https://gitlab.covestro.com/"+ $RepositoryPath
+    $projectJson.GeneratedValues.GitlabUrl = "https://gitlab.kelvin.com/"+ $RepositoryPath
     $RepositoryPathSuffix = $RepositoryPath.Replace("/","_")
     $RepositoryPath = $RepositoryPath +"/master/"+$RepositoryPathSuffix + ".zip"
 
